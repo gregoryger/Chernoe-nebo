@@ -5,3 +5,4 @@ dist/
 # tools/step1..step2. Производные data/*.geojson и data/*.json — в репозитории,
 # без них игра не запускается.
 data/raw/
+public/data/

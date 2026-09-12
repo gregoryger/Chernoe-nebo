@@ -5,7 +5,10 @@
   "type": "module",
   "description": "Стратегия о лесном пожаре в Красноярском крае",
   "scripts": {
+    "sync": "node tools/sync_data.mjs",
+    "predev": "node tools/sync_data.mjs",
     "dev": "vite",
+    "prebuild": "node tools/sync_data.mjs",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
