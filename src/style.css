@@ -55,6 +55,7 @@ html, body {
   min-width: 96px;
 }
 .cell.wide { min-width: 210px; }
+.botbar .cell:nth-child(3) { min-width: 150px; }
 .cell b {
   display: block;
   font-size: 17px;
@@ -321,3 +322,75 @@ html, body {
 #ui:not(.playing) .botbar,
 #ui:not(.playing) .feed,
 #ui:not(.playing) .panel { display: none; }
+
+/* ------------------------------------------------------------------ легенда */
+/* Край вытянут вертикально, поэтому на широком экране слева остаётся пустое
+   поле. Легенда занимает его и заодно объясняет цвета и управление. */
+.legend {
+  position: absolute;
+  left: 12px;
+  top: 84px;
+  width: 214px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 11px 13px 13px;
+}
+.legend h3 {
+  margin: 0 0 7px;
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  font-weight: 600;
+}
+.legend h3 + ul + h3 { margin-top: 13px; }
+.legend ul { list-style: none; margin: 0; padding: 0; }
+.legend .ramp li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--ink-2);
+  padding: 2.5px 0;
+}
+.legend .ramp i {
+  width: 14px;
+  height: 14px;
+  border-radius: 2px;
+  flex: none;
+  border: 1px solid rgba(0, 0, 0, 0.35);
+}
+.legend .ramp i.dashed { background: transparent; border: 1px dashed var(--accent); }
+.legend .ramp i.faded { background: #D96F16; opacity: 0.45; }
+.legend .keys li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--ink-2);
+  padding: 2.5px 0;
+}
+.legend kbd {
+  flex: none;
+  min-width: 52px;
+  text-align: center;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 1px 5px;
+  font: inherit;
+  font-size: 10.5px;
+  color: var(--ink);
+}
+#ui:not(.playing) .legend { display: none; }
+
+@media (max-height: 700px) {
+  .legend .keys { display: none; }
+  .legend h3 + ul + h3 { display: none; }
+}
+
+/* На узком экране легенда вместе со сводками съедала бы всю карту. */
+@media (max-width: 1100px) {
+  .legend { display: none; }
+}

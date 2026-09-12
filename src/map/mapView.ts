@@ -45,6 +45,9 @@ export class MapView {
       zoom: 3,
       attributionControl: false,
       dragRotate: false,
+      // Без этого MapLibre повторяет мир по горизонтали, и на малом зуме
+      // в кадр влезает несколько копий края разом.
+      renderWorldCopies: false,
     });
 
     if (import.meta.env.DEV) {
@@ -151,7 +154,15 @@ export class MapView {
         }
       }
     }
-    this.map.fitBounds(b, { padding: 40, duration: 0 });
+    // Справа стоят сводки и панель района, слева — легенда: если вписывать
+    // с одинаковыми отступами, край уезжает под панели.
+    const wide = this.map.getContainer().clientWidth > 900;
+    this.map.fitBounds(b, {
+      padding: wide
+        ? { top: 90, bottom: 90, left: 260, right: 330 }
+        : { top: 70, bottom: 70, left: 20, right: 20 },
+      duration: 0,
+    });
   }
 
   onDistrictClick(fn: (id: DistrictId) => void): void {

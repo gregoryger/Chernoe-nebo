@@ -26,9 +26,9 @@ export class Hud {
         <div class="cell"><b id="wind">—</b><span>ветер</span></div>
         <div class="cell"><b id="drought">—</b><span>засуха</span></div>
         <div class="cell speeds">
-          <button data-speed="0" class="sp">II</button>
-          <button data-speed="1" class="sp on">1&times;</button>
-          <button data-speed="2" class="sp">3&times;</button>
+          <button data-speed="0" class="sp" title="Пауза (пробел)">Пауза</button>
+          <button data-speed="1" class="sp on" title="Обычная скорость">1&times;</button>
+          <button data-speed="2" class="sp" title="Ускоренно">3&times;</button>
         </div>
       </div>
 
@@ -39,9 +39,30 @@ export class Hud {
           <span id="grade" class="grade">до бронзы 1 000 000</span>
         </div>
         <div class="cell"><b id="sparks">0</b><span>искры</span></div>
-        <div class="cell"><b id="level">0</b><span id="levelname">тишина</span></div>
+        <div class="cell"><b id="levelname">тишина</b><span id="level">реакция МЧС · уровень 0</span></div>
         <button id="openTree" class="primary">Эволюция <i id="treeBadge" class="badge" hidden>0</i></button>
       </div>
+
+      <aside class="legend">
+        <h3>Состояние округа</h3>
+        <ul class="ramp">
+          <li><i style="background:#3E6B52"></i>лес цел</li>
+          <li><i style="background:#B8901F"></i>тлеет</li>
+          <li><i style="background:#D96F16"></i>активный пожар</li>
+          <li><i style="background:#BE3512"></i>сильный пожар</li>
+          <li><i style="background:#7E1808"></i>сплошной пожар</li>
+          <li><i style="background:#33302C"></i>выгорел</li>
+          <li><i class="dashed"></i>зона контроля — не тушат</li>
+          <li><i class="faded"></i>бледный — пожар не обнаружен</li>
+        </ul>
+        <h3>Управление</h3>
+        <ul class="keys">
+          <li><kbd>Пробел</kbd>пауза и продолжить</li>
+          <li><kbd>E</kbd>дерево эволюций</li>
+          <li><kbd>Esc</kbd>закрыть окно</li>
+          <li><kbd>клик</kbd>сводка по округу</li>
+        </ul>
+      </aside>
 
       <aside class="feed"><h3>Сводки</h3><ul id="feedList"></ul></aside>
       <aside class="panel" id="panel" hidden></aside>
@@ -85,8 +106,8 @@ export class Hud {
 
     $('burned').textContent = ha(s.totalBurned);
     $('sparks').textContent = String(Math.floor(s.sparks));
-    $('level').textContent = String(s.escalation);
     $('levelname').textContent = LEVEL_NAME[s.escalation];
+    $('level').textContent = `реакция МЧС · уровень ${s.escalation}`;
 
     const next = s.totalBurned < BRONZE ? BRONZE : s.totalBurned < SILVER ? SILVER : GOLD;
     const label = next === BRONZE ? 'бронзы' : next === SILVER ? 'серебра' : 'золота';
