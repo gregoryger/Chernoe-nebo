@@ -1,0 +1,7 @@
+node_modules/
+dist/
+
+# Сырые выгрузки Overpass: 5+ МБ и полностью воспроизводятся скриптами
+# tools/step1..step2. Производные data/*.geojson и data/*.json — в репозитории,
+# без них игра не запускается.
+data/raw/
