@@ -116,6 +116,16 @@ export class MapView {
         },
       });
 
+      // Округ, на который направлен фронт.
+      this.map.addLayer({
+        id: 'focus', type: 'line', source: SOURCE,
+        paint: {
+          'line-color': '#F0813A',
+          'line-width': ['case', ['==', ['coalesce', ['feature-state', 'focus'], 0], 1], 2.6, 0],
+          'line-dasharray': [2, 1.6],
+        } as unknown as maplibregl.LineLayerSpecification['paint'],
+      });
+
       this.map.addLayer({
         id: 'hover', type: 'line', source: SOURCE,
         paint: {
@@ -186,6 +196,7 @@ export class MapView {
         f: st.F,
         smoke: st.smoke,
         known: st.known ? 1 : 0,
+        focus: s.focus === id ? 1 : 0,
       });
     }
   }

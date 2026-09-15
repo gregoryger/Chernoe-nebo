@@ -1,6 +1,7 @@
 import { BRONZE, GOLD, SILVER } from '../sim/tick';
 import { formatDate, seasonDay } from '../sim/weather';
 import { describeState } from '../map/ramp';
+import { canThrow, throwCost } from '../sim/world';
 import type { District, DistrictId, WorldState } from '../sim/types';
 
 const ha = (n: number) => Math.round(n).toLocaleString('ru');
@@ -17,6 +18,7 @@ const LEVEL_NAME = [
 export class Hud {
   private root: HTMLElement;
   private lastEventCount = 0;
+  private panelAction?: (act: string, id: DistrictId) => void;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -40,6 +42,7 @@ export class Hud {
         </div>
         <div class="cell"><b id="sparks">0</b><span>искры</span></div>
         <div class="cell"><b id="levelname">тишина</b><span id="level">реакция МЧС · уровень 0</span></div>
+        <div class="cell" id="focusCell"><b id="focusName">не задан</b><span>фронт направлен</span></div>
         <button id="openTree" class="primary">Эволюция <i id="treeBadge" class="badge" hidden>0</i></button>
       </div>
 
@@ -54,19 +57,39 @@ export class Hud {
           <li><i style="background:#33302C"></i>выгорел</li>
           <li><i class="dashed"></i>зона контроля — не тушат</li>
           <li><i class="faded"></i>бледный — пожар не обнаружен</li>
+          <li><i class="focusmark"></i>фронт направлен сюда</li>
         </ul>
         <h3>Управление</h3>
         <ul class="keys">
           <li><kbd>Пробел</kbd>пауза и продолжить</li>
           <li><kbd>E</kbd>дерево эволюций</li>
           <li><kbd>Esc</kbd>закрыть окно</li>
-          <li><kbd>клик</kbd>сводка по округу</li>
+          <li><kbd>клик</kbd>сводка и управление</li>
         </ul>
       </aside>
 
       <aside class="feed"><h3>Сводки</h3><ul id="feedList"></ul></aside>
       <aside class="panel" id="panel" hidden></aside>
     `;
+
+    // Панель перерисовывается на каждом такте, поэтому слушатель висит на
+    // контейнере, а не на кнопках внутри него.
+    this.root.querySelector('#panel')!.addEventListener('click', (e) => {
+      const target = e.target as HTMLElement;
+      if (target.closest('#closePanel')) {
+        this.hidePanel();
+        return;
+      }
+      const btn = target.closest<HTMLElement>('[data-act]');
+      if (btn && !btn.hasAttribute('disabled')) {
+        this.panelAction?.(btn.dataset.act!, btn.dataset.id!);
+      }
+    });
+  }
+
+  /** Действия из панели округа: 'focus' и 'throw'. */
+  onPanelAction(fn: (act: string, id: DistrictId) => void): void {
+    this.panelAction = fn;
   }
 
   onSpeed(fn: (speed: number) => void): void {
@@ -116,12 +139,19 @@ export class Hud {
       ? 'золото взято'
       : `до ${label} ${ha(next - s.totalBurned)}`;
 
+    const focusName = s.focus ? this.focusLabel : 'не задан';
+    $('focusName').textContent = focusName;
+    $('focusName').classList.toggle('dim', !s.focus);
+
     const badge = $('treeBadge');
     badge.hidden = affordable === 0;
     badge.textContent = String(affordable);
 
     this.renderFeed(s);
   }
+
+  /** Имя округа-фокуса; проставляется при отрисовке панели и в main. */
+  focusLabel = 'не задан';
 
   private renderFeed(s: WorldState): void {
     if (s.events.length === this.lastEventCount) return;
@@ -140,6 +170,17 @@ export class Hud {
     const FUEL = ['', 'тундра', 'северная тайга', 'средняя тайга', 'сосняк', 'лесостепь'];
     const cap = d.area * d.forest * 100 * d.budget;
 
+    const isFocus = s.focus === d.id;
+    const cost = throwCost(s);
+    const throwOk = canThrow(s, districts, d.id);
+    const throwHint = throwOk
+      ? 'Головни перелетят от соседнего пожара'
+      : st.B > 0.01 ? 'Здесь уже горит'
+      : st.F < 0.1 ? 'Гореть нечему'
+      : s.throwCooldown > 0 ? `Искры кончились, ждать ${s.throwCooldown} тактов`
+      : s.sparks < cost ? `Не хватает ${Math.ceil(cost - s.sparks)} искр`
+      : 'Рядом нет достаточно сильного пожара';
+
     panel.hidden = false;
     panel.innerHTML = `
       <button class="close" id="closePanel">&times;</button>
@@ -155,6 +196,17 @@ export class Hud {
         <div><dt>Задымление</dt><dd>${Math.round(st.smoke * 100)}%</dd></div>
         <div><dt>Аэродром</dt><dd>${d.hasAirfield ? 'есть' : 'нет'}</dd></div>
       </dl>
+      <div class="acts">
+        <button data-act="focus" data-id="${d.id}" class="act ${isFocus ? 'on' : ''}">
+          ${isFocus ? 'Снять фокус' : 'Направить фронт сюда'}
+        </button>
+        <button data-act="throw" data-id="${d.id}" class="act throw"
+                ${throwOk ? '' : 'disabled'}>
+          Бросить искры · ${cost}
+        </button>
+        <span class="act-hint">${throwHint}</span>
+      </div>
+
       <h4>Соседи</h4>
       <ul class="neigh">
         ${d.neighbors.map((e) => {

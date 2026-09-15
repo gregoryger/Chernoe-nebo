@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { BY_ID, EVOLUTIONS, canBuy, computeModifiers } from '../src/sim/evolutions';
 import { tick } from '../src/sim/tick';
-import { buy, createWorld, findStart, loadDistricts, sizeFactor } from '../src/sim/world';
+import {
+  THROW_BASE, THROW_STEP, buy, canThrow, createWorld, emberThrow, findStart,
+  loadDistricts, setFocus, sizeFactor, throwCost,
+} from '../src/sim/world';
 import type { RawDistrict } from '../src/sim/world';
 import { SEASON_TICKS, droughtBase, formatDate } from '../src/sim/weather';
 
@@ -145,5 +148,81 @@ describe('погода и календарь', () => {
 
   it('крупный округ горит медленнее по доле охвата', () => {
     expect(sizeFactor(700_000)).toBeLessThan(sizeFactor(15_000));
+  });
+});
+
+describe('управление направлением', () => {
+  it('фокус повышает шанс перехода в выбранный округ', () => {
+    // Эффект вероятностный, поэтому меряем долю партий, где цель загорелась,
+    // на одних и тех же семенах с фокусом и без.
+    const target = findStart(districts, 'Туруханский');
+    const seeds = Array.from({ length: 40 }, (_, i) => 500 + i * 131);
+
+    const share = (withFocus: boolean) => {
+      let hit = 0;
+      for (const seed of seeds) {
+        const s = createWorld(districts, evenkia, seed);
+        if (withFocus) setFocus(s, target);
+        for (let i = 0; i < 160 && s.status === 'running'; i++) {
+          for (const id of ['A1', 'A2']) {
+            if (canBuy(id, s.bought, s.sparks)) buy(s, id, BY_ID[id].cost);
+          }
+          tick(s, districts);
+        }
+        if (s.districts[target].ignited) hit++;
+      }
+      return hit / seeds.length;
+    };
+
+    expect(share(true)).toBeGreaterThan(share(false));
+  });
+
+  it('фокус на себя ничего не ломает', () => {
+    const s = createWorld(districts, evenkia, 5);
+    setFocus(s, evenkia);
+    expect(() => { for (let i = 0; i < 50; i++) tick(s, districts); }).not.toThrow();
+  });
+
+  it('повторный клик снимает фокус', () => {
+    const s = createWorld(districts, evenkia, 5);
+    const other = findStart(districts, 'Богучанский');
+    setFocus(s, other);
+    expect(s.focus).toBe(other);
+    setFocus(s, other);
+    expect(s.focus).toBeNull();
+  });
+
+  it('бросок искр требует горящего соседа', () => {
+    const s = createWorld(districts, evenkia, 5);
+    s.sparks = 500;
+    const far = findStart(districts, 'Минусинский');
+    expect(canThrow(s, districts, far)).toBe(false);
+    expect(emberThrow(s, districts, far)).toBe(false);
+    expect(s.sparks).toBe(500);
+  });
+
+  it('бросок поджигает округ, списывает искры и уходит в простой', () => {
+    const s = createWorld(districts, evenkia, 5);
+    s.districts[evenkia].B = 0.4;
+    s.sparks = 500;
+    const neighbour = districts[evenkia].neighbors[0].to;
+
+    const before = s.sparks;
+    expect(emberThrow(s, districts, neighbour)).toBe(true);
+    expect(s.districts[neighbour].B).toBeGreaterThan(0);
+    // Списана цена, но начислен бонус за новый округ.
+    expect(s.sparks).toBe(before - THROW_BASE + 10);
+    expect(s.throwCooldown).toBeGreaterThan(0);
+
+    // Пока идёт простой, второй бросок невозможен.
+    const other = districts[evenkia].neighbors[1].to;
+    expect(canThrow(s, districts, other)).toBe(false);
+  });
+
+  it('каждый следующий бросок дороже', () => {
+    const s = createWorld(districts, evenkia, 5);
+    expect(throwCost(s)).toBe(THROW_BASE);
+    s.throws = 2;
+    expect(throwCost(s)).toBe(THROW_BASE + 2 * THROW_STEP);
   });
 });

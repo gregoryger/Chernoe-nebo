@@ -73,7 +73,7 @@ export function budget(area: number): number {
 }
 
 /** Азимут от a к b в системе windDir: 0 — на восток, π/2 — на север. */
-function bearing(a: [number, number], b: [number, number]): number {
+export function bearing(a: [number, number], b: [number, number]): number {
   const latMean = ((a[1] + b[1]) / 2) * (Math.PI / 180);
   const dx = (b[0] - a[0]) * Math.cos(latMean);
   const dy = b[1] - a[1];
@@ -153,6 +153,9 @@ export function createWorld(
     escalation: 0,
     weather: initWeather({ rng: 0 }),
     totalBurned: 0,
+    focus: null,
+    throws: 0,
+    throwCooldown: 0,
     events: [],
     status: 'running',
     grade: null,
@@ -165,6 +168,68 @@ export function createWorld(
     text: `Очаг возгорания: ${districts[startId].name}.`,
   });
   return s;
+}
+
+/** Базовая цена броска искр и надбавка за каждый последующий. */
+export const THROW_BASE = 25;
+export const THROW_STEP = 15;
+/** Тактов простоя после броска. */
+export const THROW_COOLDOWN = 8;
+/** Минимальная доля охвата у соседа, чтобы было чем бросаться. */
+const THROW_SOURCE_B = 0.05;
+
+export function throwCost(s: WorldState): number {
+  return THROW_BASE + THROW_STEP * s.throws;
+}
+
+/**
+ * Можно ли забросить искры в этот округ.
+ *
+ * Бросок — не телепорт: рядом должен гореть округ, откуда полетят головни.
+ * Растущая цена и простой не дают превратить механику в основной способ
+ * распространения и обесценить ветку эволюций «Распространение».
+ */
+export function canThrow(
+  s: WorldState,
+  districts: Record<DistrictId, District>,
+  id: DistrictId,
+): boolean {
+  const st = s.districts[id];
+  if (!st || st.B > 0.01 || st.F < 0.1) return false;
+  if (s.throwCooldown > 0 || s.sparks < throwCost(s)) return false;
+  return districts[id].neighbors.some((e) => s.districts[e.to].B >= THROW_SOURCE_B);
+}
+
+/** Забросить искры в выбранный округ. Возвращает false, если нельзя. */
+export function emberThrow(
+  s: WorldState,
+  districts: Record<DistrictId, District>,
+  id: DistrictId,
+): boolean {
+  if (!canThrow(s, districts, id)) return false;
+  s.sparks -= throwCost(s);
+  s.throws++;
+  s.throwCooldown = THROW_COOLDOWN;
+
+  const st = s.districts[id];
+  st.B = Math.max(st.B, 0.02);
+  if (!st.ignited) {
+    st.ignited = true;
+    // Правило «каждый новый округ даёт 10 искр» должно работать всегда,
+    // иначе игрок не может на него рассчитывать. Цена броска это учитывает.
+    s.sparks += 10;
+  }
+  s.events.push({
+    tick: s.tick,
+    kind: 'ignite',
+    text: `Бросок искр: занялся ${districts[id].name}.`,
+  });
+  return true;
+}
+
+/** Направить фронт на округ; null снимает фокус. */
+export function setFocus(s: WorldState, id: DistrictId | null): void {
+  s.focus = s.focus === id ? null : id;
 }
 
 /** Применить покупку эволюции. Возвращает false, если купить нельзя. */

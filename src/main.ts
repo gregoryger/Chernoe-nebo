@@ -4,7 +4,7 @@ import './style.css';
 import { MapView } from './map/mapView';
 import { BY_ID, EVOLUTIONS, canBuy } from './sim/evolutions';
 import { tick } from './sim/tick';
-import { buy, createWorld, loadDistricts } from './sim/world';
+import { buy, createWorld, emberThrow, loadDistricts, setFocus } from './sim/world';
 import type { RawDistrict } from './sim/world';
 import { Hud } from './ui/hud';
 import { TreeView } from './ui/tree';
@@ -38,6 +38,12 @@ async function boot() {
 
   function redraw(): void {
     if (!state) return;
+    if (import.meta.env.DEV) {
+      (window as unknown as { __state: WorldState }).__state = state;
+    }
+    hud.focusLabel = state.focus
+      ? districts[state.focus].name.replace(' муниципальный округ', '')
+      : 'не задан';
     mapView.sync(state);
     hud.update(state, affordableCount(state));
     tree.render(state);
@@ -88,6 +94,13 @@ async function boot() {
   hud.onOpenTree(() => { if (state) tree.toggle(state); });
   tree.onPurchase((id) => {
     if (state && buy(state, id, BY_ID[id].cost)) redraw();
+  });
+
+  hud.onPanelAction((act, id) => {
+    if (!state) return;
+    if (act === 'focus') setFocus(state, id);
+    if (act === 'throw') emberThrow(state, districts, id);
+    redraw();
   });
 
   mapView.onDistrictClick((id) => {

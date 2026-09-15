@@ -363,6 +363,7 @@ html, body {
 }
 .legend .ramp i.dashed { background: transparent; border: 1px dashed var(--accent); }
 .legend .ramp i.faded { background: #D96F16; opacity: 0.45; }
+.legend .ramp i.focusmark { background: transparent; border: 1px dashed var(--ember); }
 .legend .keys li {
   display: flex;
   align-items: baseline;
@@ -394,3 +395,27 @@ html, body {
 @media (max-width: 1100px) {
   .legend { display: none; }
 }
+
+/* ------------------------------------------- управление направлением огня */
+.acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 11px; }
+.act {
+  flex: 1 1 100%;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  border-radius: 3px;
+  padding: 7px 9px;
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  text-align: left;
+}
+.act:hover:not([disabled]) { border-color: var(--ember); color: var(--ember); }
+.act.on { border-color: var(--ember); color: var(--ember); }
+.act.throw { font-variant-numeric: tabular-nums; }
+.act[disabled] { opacity: 0.4; cursor: not-allowed; }
+.act:focus-visible { outline: 2px solid var(--ember); outline-offset: 2px; }
+.act-hint { flex: 1 1 100%; font-size: 11px; color: var(--ink-3); line-height: 1.35; }
+
+#focusCell b.dim { color: var(--ink-3); font-weight: 400; }
+.botbar #focusCell { min-width: 140px; }

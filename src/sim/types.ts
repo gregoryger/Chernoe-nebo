@@ -138,6 +138,17 @@ export interface WorldState {
   escalation: number;
   weather: Weather;
   totalBurned: number;
+  /**
+   * Округ, на который направлен фронт. Прямой переход туда идёт охотнее,
+   * а соседние направления получают поправку по тому, насколько они совпадают
+   * с курсом на фокус. Огонь остаётся стихией: ветер, реки и МЧС по-прежнему
+   * могут спутать планы.
+   */
+  focus: DistrictId | null;
+  /** Сколько раз игрок бросал искры — цена растёт с каждым разом. */
+  throws: number;
+  /** Тактов до следующего возможного броска. */
+  throwCooldown: number;
   events: GameEvent[];
   status: Status;
   grade: Grade;
@@ -145,4 +156,7 @@ export interface WorldState {
   flags: Record<string, boolean>;
 }
 
-export type Action = { type: 'buy'; id: string };
+export type Action =
+  | { type: 'buy'; id: string }
+  | { type: 'focus'; id: DistrictId | null }
+  | { type: 'throw'; id: DistrictId };

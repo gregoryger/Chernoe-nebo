@@ -1,6 +1,7 @@
 import { rnd } from './rng';
 import { stepResponse } from './response';
 import { SEASON_TICKS, TICKS_PER_DAY, stepWeather } from './weather';
+import { bearing } from './world';
 import type { District, DistrictId, Grade, WorldState } from './types';
 
 /**
@@ -32,6 +33,31 @@ export const GOLD = 5_500_000;
 export const SILVER = 2_600_000;
 export const BRONZE = 500_000;
 
+/** Во сколько раз охотнее огонь идёт прямо в округ-фокус. */
+const FOCUS_DIRECT = 2.2;
+/** Размах поправки для остальных направлений по курсу на фокус: ±40%. */
+const FOCUS_PULL = 0.4;
+
+/**
+ * Поправка вероятности перехода с учётом выбранного игроком фокуса.
+ *
+ * Прямой переход в округ-фокус усиливается втрое с небольшим, остальные
+ * направления получают от −40% до +40% по тому, насколько они совпадают
+ * с курсом на фокус. Для сравнения, ветер даёт разброс 0.4…1.0 — управление
+ * заметно, но не отменяет ни ветер, ни барьеры.
+ */
+function focusMultiplier(
+  s: WorldState,
+  districts: Record<DistrictId, District>,
+  from: District,
+  edge: { to: DistrictId; bearing: number },
+): number {
+  if (!s.focus || s.focus === from.id) return 1;
+  if (edge.to === s.focus) return FOCUS_DIRECT;
+  const course = bearing(from.centroid, districts[s.focus].centroid);
+  return 1 + FOCUS_PULL * Math.cos(edge.bearing - course);
+}
+
 function gradeFor(ha: number): Grade {
   if (ha >= GOLD) return 'gold';
   if (ha >= SILVER) return 'silver';
@@ -54,6 +80,7 @@ export function tick(s: WorldState, districts: Record<DistrictId, District>): Wo
   if (s.status !== 'running') return s;
 
   s.tick++;
+  if (s.throwCooldown > 0) s.throwCooldown--;
   stepWeather(s);
 
   const w = s.weather;
@@ -152,7 +179,8 @@ export function tick(s: WorldState, districts: Record<DistrictId, District>): Wo
         + (dst.minLine >= 1 ? 0.5 * s.mods.minLineMult : 0));
 
       const align = 0.4 + 0.6 * Math.max(0, Math.cos(e.bearing - w.windDir));
-      const p = st.B * s.mods.tau * e.w * align * (1 - barrier) * dst.F * w.W;
+      const p = st.B * s.mods.tau * e.w * align * (1 - barrier) * dst.F * w.W
+        * focusMultiplier(s, districts, d, e);
 
       if (rnd(s) < p) ignitions.push({ id: e.to, from: d.name });
     }
