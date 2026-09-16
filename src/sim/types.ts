@@ -101,7 +101,11 @@ export interface Modifiers {
   damageMult: number;
   nightPenalty: number;
   riverBarrierMult: number;
-  roadBarrierMult: number;
+  /**
+   * Множитель переброса в малолесный округ (лесостепь, сельхозземли).
+   * Заменил roadBarrierMult: дорожных барьеров в крае не оказалось.
+   */
+  steppeSpread: number;
   minLineMult: number;
   aviationMult: number;
   backfireMult: number;

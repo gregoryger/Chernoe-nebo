@@ -157,6 +157,33 @@ describe('эволюции', () => {
     }
   });
 
+  it('степной пал расширяет охват лесостепи', () => {
+    /*
+     * A5 заменил «Прорыв по просекам»: тот снимал дорожные барьеры, которых
+     * в данных нет — все 176 рёбер имеют road = 0, потому что сибирские трассы
+     * идут поперёк границ, а не вдоль. Узел не делал ничего, и тест на это
+     * отсутствовал, поэтому мёртвая ветка жила незамеченной.
+     */
+    const steppe = Object.values(districts).filter((d) => d.forest < 0.35);
+    expect(steppe.length).toBeGreaterThan(5);
+
+    const from = findStart(districts, 'Богучанский');
+    const reach = (buys: string[]) => {
+      let hit = 0;
+      const seeds = Array.from({ length: 16 }, (_, i) => 11 + i * 37);
+      for (const seed of seeds) {
+        const s = createWorld(districts, from, seed);
+        while (s.status === 'running') {
+          for (const id of buys) if (canBuy(id, s.bought, s.sparks)) buy(s, id, BY_ID[id].cost);
+          tick(s, districts);
+        }
+        for (const d of steppe) if (s.districts[d.id].ignited) hit++;
+      }
+      return hit / seeds.length;
+    };
+    expect(reach(['A1', 'A2', 'A4', 'A5'])).toBeGreaterThan(reach(['A1', 'A2', 'A4']));
+  });
+
   it('из компактного округа распространение решает вдвое', () => {
     // Богучаны — представительный средний случай: средняя тайга, пять соседей.
     expect(spreadGain('Богучанский')).toBeGreaterThan(2);

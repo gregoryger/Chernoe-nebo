@@ -96,7 +96,11 @@ export function stepWeather(s: WorldState): void {
   if (w.event === null) {
     const roll = rnd(s);
     const summer = day > 45 && day < 130;
-    if (roll < (summer ? 0.030 : 0.012)) {
+    // Частота повышена с 0.030/0.012: распределение исходов бимодально, и
+    // нижняя мода — партии, где единственный очаг заглох, а сезон ещё идёт.
+    // Новые грозовые очаги поднимают дно, почти не задевая потолок: в удачной
+    // партии огонь и так везде, лишний очаг там мало что добавляет.
+    if (roll < (summer ? 0.048 : 0.019)) {
       w.event = 'storm';
       w.eventTicks = 2;
       s.events.push({ tick: s.tick, kind: 'weather', text: 'Сухая гроза.' });

@@ -22,7 +22,7 @@ export const BASE_MODS: Modifiers = {
   damageMult: 1,
   nightPenalty: 0.55,
   riverBarrierMult: 1,
-  roadBarrierMult: 1,
+  steppeSpread: 1,
   minLineMult: 1,
   aviationMult: 1,
   backfireMult: 1,
@@ -47,8 +47,14 @@ export const EVOLUTIONS: Evolution[] = [
     desc: 'Головни улетают по ветру: огонь перескакивает через район.' },
   { id: 'A4', branch: 'A', name: 'Переход через реки', cost: 36, needs: 'A2',
     desc: 'Речные барьеры ослаблены на 80%. Открывает правый берег Енисея.' },
-  { id: 'A5', branch: 'A', name: 'Прорыв по просекам', cost: 30, needs: 'A4',
-    desc: 'Дорожные и железнодорожные барьеры сняты полностью.' },
+  // Заменил «Прорыв по просекам». Тот узел снимал дорожные барьеры, которых
+  // в данных не оказалось: в Сибири трассы идут поперёк границ, соединяя
+  // посёлки, а не вдоль них, и линейной преградой между округами не служат.
+  // Узел не делал ничего. Степной пал опирается на лесистость — она в данных
+  // есть — и открывает юг края, куда огню из тайги ходу почти нет.
+  { id: 'A5', branch: 'A', name: 'Степной пал', cost: 30, needs: 'A4',
+    desc: 'Сухая трава несёт огонь по лесостепи: переброс в малолесные '
+      + 'округа усилен в 2.4 раза.' },
   { id: 'A6', branch: 'A', name: 'Торфяной пожар', cost: 60, needs: 'A5',
     desc: 'Огонь уходит под землю: не гаснет полностью и переживает дождь.' },
 
@@ -110,7 +116,7 @@ export function computeModifiers(bought: readonly string[]): Modifiers {
   if (has('A2')) { m.r *= 1.4; m.tau *= 1.3; m.crownFire = true; }
   if (has('A3')) m.spotting = true;
   if (has('A4')) m.riverBarrierMult = 0.2;
-  if (has('A5')) m.roadBarrierMult = 0;
+  if (has('A5')) m.steppeSpread = 2.4;
   if (has('A6')) m.peat = true;
 
   if (has('B1')) { m.smokeOn = true; m.aviationMult *= 0.75; }

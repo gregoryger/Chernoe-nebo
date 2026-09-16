@@ -32,7 +32,7 @@ const SPARK_PER_DISTRICT = 10;
  * к нему множителем CONSUME. Бронза и золото поставлены по p25 и p85
  * измеренного распределения.
  */
-export const GOLD = 5_500_000;
+export const GOLD = 5_900_000;
 export const SILVER = 2_600_000;
 export const BRONZE = 500_000;
 
@@ -106,7 +106,12 @@ export function tick(s: WorldState, districts: Record<DistrictId, District>): Wo
       // sizeFactor здесь НЕ применяется: за «гигантский округ не выгорает
       // целиком» отвечает d.budget в пересчёте гектаров. Два механизма на одну
       // задачу душили крупные округа вдвойне.
-      const growth = st.B * r * st.F * d.k * w.W * w.D * night * (1 - st.B);
+      // Трава вспыхивает и проходит быстро — в малолесном округе запас
+      // горючего мал, но выгорает он стремительно. Без этой прибавки «Степной
+      // пал» открывал юг края, где нечего было взять, и не окупался.
+      const grass = (s.mods.steppeSpread > 1 && d.forest < 0.35) ? 1.7 : 1;
+
+      const growth = st.B * r * grass * st.F * d.k * w.W * w.D * night * (1 - st.B);
 
       // Минполоса не гасит очаг, а мешает ему расти вширь.
       const lineDrag = st.minLine >= 1 ? 0.75 * s.mods.minLineMult + (1 - s.mods.minLineMult) : 1;
@@ -178,12 +183,16 @@ export function tick(s: WorldState, districts: Record<DistrictId, District>): Wo
 
       const barrier = Math.min(0.6,
         e.river * s.mods.riverBarrierMult
-        + e.road * s.mods.roadBarrierMult
         + (dst.minLine >= 1 ? 0.5 * s.mods.minLineMult : 0));
+
+      // Лесостепь горит травой, а не древостоем: без «Степного пала» огонь
+      // туда почти не идёт, потому что переброс пропорционален запасу
+      // горючего, а его в малолесном округе мало.
+      const steppe = districts[e.to].forest < 0.35 ? s.mods.steppeSpread : 1;
 
       const align = 0.4 + 0.6 * Math.max(0, Math.cos(e.bearing - w.windDir));
       const p = st.B * s.mods.tau * e.w * align * (1 - barrier) * dst.F * w.W
-        * focusMultiplier(s, districts, d, e);
+        * steppe * focusMultiplier(s, districts, d, e);
 
       if (rnd(s) < p) ignitions.push({ id: e.to, from: d.name });
     }
