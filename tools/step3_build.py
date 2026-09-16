@@ -114,173 +114,179 @@ def stitch(ways):
     return rings
 
 
-# ---------------------------------------------------------------- загрузка
+def main():
+    # ---------------------------------------------------------------- загрузка
 
-parts = sorted(RAW.glob("*.json"))
-print(f"Читаю {len(parts)} районов...")
+    parts = sorted(RAW.glob("*.json"))
+    print(f"Читаю {len(parts)} районов...")
 
-districts, way_len, way_owners = {}, {}, {}
+    districts, way_len, way_owners = {}, {}, {}
 
-for p in parts:
-    rec = json.loads(p.read_text(encoding="utf-8"))
-    rid = str(rec["id"])
-    outer = []
-    for m in rec["members"]:
-        if m["role"] not in ("outer", "", "exclave"):
+    for p in parts:
+        rec = json.loads(p.read_text(encoding="utf-8"))
+        rid = str(rec["id"])
+        outer = []
+        for m in rec["members"]:
+            if m["role"] not in ("outer", "", "exclave"):
+                continue
+            outer.append(m["geometry"])
+            wid = m["ref"]
+            if wid not in way_len:
+                way_len[wid] = line_length(m["geometry"])
+            way_owners.setdefault(wid, set()).add(rid)
+        districts[rid] = {
+            "id": rid,
+            "name": rec["name"],
+            "tags": rec["tags"],
+            "ways": {m["ref"] for m in rec["members"] if m["role"] in ("outer", "", "exclave")},
+            "raw_outer": outer,
+        }
+
+    # ------------------------------------------------------------ граф соседства
+
+    print("Строю граф соседства по общим way...")
+    shared = {}
+    for wid, owners in way_owners.items():
+        if len(owners) < 2:
             continue
-        outer.append(m["geometry"])
-        wid = m["ref"]
-        if wid not in way_len:
-            way_len[wid] = line_length(m["geometry"])
-        way_owners.setdefault(wid, set()).add(rid)
-    districts[rid] = {
-        "id": rid,
-        "name": rec["name"],
-        "tags": rec["tags"],
-        "ways": {m["ref"] for m in rec["members"] if m["role"] in ("outer", "", "exclave")},
-        "raw_outer": outer,
+        owners = sorted(owners)
+        for i in range(len(owners)):
+            for j in range(i + 1, len(owners)):
+                key = (owners[i], owners[j])
+                shared[key] = shared.get(key, 0.0) + way_len[wid]
+
+    perimeter = {
+        rid: sum(way_len[w] for w in d["ways"] if w in way_len) or 1.0
+        for rid, d in districts.items()
     }
 
-# ------------------------------------------------------------ граф соседства
+    adjacency = {rid: [] for rid in districts}
+    for (a, b), length in shared.items():
+        adjacency[a].append({"to": b, "km": round(length, 1),
+                             "w": round(min(1.0, length / perimeter[a]), 4)})
+        adjacency[b].append({"to": a, "km": round(length, 1),
+                             "w": round(min(1.0, length / perimeter[b]), 4)})
+    for rid in adjacency:
+        adjacency[rid].sort(key=lambda e: -e["km"])
 
-print("Строю граф соседства по общим way...")
-shared = {}
-for wid, owners in way_owners.items():
-    if len(owners) < 2:
-        continue
-    owners = sorted(owners)
-    for i in range(len(owners)):
-        for j in range(i + 1, len(owners)):
-            key = (owners[i], owners[j])
-            shared[key] = shared.get(key, 0.0) + way_len[wid]
+    # --------------------------------------------------------- сборка геометрии
 
-perimeter = {
-    rid: sum(way_len[w] for w in d["ways"] if w in way_len) or 1.0
-    for rid, d in districts.items()
-}
+    print("Сшиваю кольца и упрощаю...")
+    features = []
+    meta = {}
+    raw_pts = simp_pts = 0
 
-adjacency = {rid: [] for rid in districts}
-for (a, b), length in shared.items():
-    adjacency[a].append({"to": b, "km": round(length, 1),
-                         "w": round(min(1.0, length / perimeter[a]), 4)})
-    adjacency[b].append({"to": a, "km": round(length, 1),
-                         "w": round(min(1.0, length / perimeter[b]), 4)})
-for rid in adjacency:
-    adjacency[rid].sort(key=lambda e: -e["km"])
+    for rid, d in districts.items():
+        rings = stitch(d["raw_outer"])
+        rings.sort(key=ring_area, reverse=True)
+        area_km2 = ring_area(rings[0]) if rings else 0.0
+        # мелкие острова (Таймыр) дают десятки колец — на игровой карте они шум
+        # Порог должен быть относительным: абсолютный в десятки км² убивает
+        # городские округа и ЗАТО целиком.
+        rings = [r for r in rings if ring_area(r) > max(1.0, area_km2 * 0.002)]
 
-# --------------------------------------------------------- сборка геометрии
+        simplified = []
+        for r in rings:
+            raw_pts += len(r)
+            s = dp_simplify(r, SIMPLIFY_TOL)
+            if len(s) < 4:
+                continue
+            if s[0] != s[-1]:
+                s.append(s[0])
+            s = [[round(x, 4), round(y, 4)] for x, y in s]
+            simp_pts += len(s)
+            simplified.append([s])
 
-print("Сшиваю кольца и упрощаю...")
-features = []
-meta = {}
-raw_pts = simp_pts = 0
-
-for rid, d in districts.items():
-    rings = stitch(d["raw_outer"])
-    rings.sort(key=ring_area, reverse=True)
-    area_km2 = ring_area(rings[0]) if rings else 0.0
-    # мелкие острова (Таймыр) дают десятки колец — на игровой карте они шум
-    # Порог должен быть относительным: абсолютный в десятки км² убивает
-    # городские округа и ЗАТО целиком.
-    rings = [r for r in rings if ring_area(r) > max(1.0, area_km2 * 0.002)]
-
-    simplified = []
-    for r in rings:
-        raw_pts += len(r)
-        s = dp_simplify(r, SIMPLIFY_TOL)
-        if len(s) < 4:
+        if not simplified:
+            print(f"  ВНИМАНИЕ: {d['name']} — не удалось собрать кольца")
             continue
-        if s[0] != s[-1]:
-            s.append(s[0])
-        s = [[round(x, 4), round(y, 4)] for x, y in s]
-        simp_pts += len(s)
-        simplified.append([s])
 
-    if not simplified:
-        print(f"  ВНИМАНИЕ: {d['name']} — не удалось собрать кольца")
-        continue
+        total_area = sum(ring_area(poly[0]) for poly in simplified)
+        flat = [pt for poly in simplified for pt in poly[0]]
+        cx = sum(p[0] for p in flat) / len(flat)
+        cy = sum(p[1] for p in flat) / len(flat)
 
-    total_area = sum(ring_area(poly[0]) for poly in simplified)
-    flat = [pt for poly in simplified for pt in poly[0]]
-    cx = sum(p[0] for p in flat) / len(flat)
-    cy = sum(p[1] for p in flat) / len(flat)
+        features.append({
+            "type": "Feature",
+            "id": int(rid),
+            "properties": {"id": rid, "name": d["name"]},
+            "geometry": {"type": "MultiPolygon", "coordinates": simplified},
+        })
+        meta[rid] = {
+            "id": rid,
+            "name": d["name"],
+            "area": round(total_area),
+            "centroid": [round(cx, 4), round(cy, 4)],
+            "perimeter": round(perimeter[rid]),
+            "neighbors": adjacency[rid],
+        }
 
-    features.append({
-        "type": "Feature",
-        "id": int(rid),
-        "properties": {"id": rid, "name": d["name"]},
-        "geometry": {"type": "MultiPolygon", "coordinates": simplified},
-    })
-    meta[rid] = {
-        "id": rid,
-        "name": d["name"],
-        "area": round(total_area),
-        "centroid": [round(cx, 4), round(cy, 4)],
-        "perimeter": round(perimeter[rid]),
-        "neighbors": adjacency[rid],
-    }
+    # ------------------------------------------------- анклавы и калибровка площади
 
-# ------------------------------------------------- анклавы и калибровка площади
-
-def point_in_ring(pt, ring):
-    x, y = pt
-    inside = False
-    for i in range(len(ring) - 1):
-        x1, y1 = ring[i]
-        x2, y2 = ring[i + 1]
-        if (y1 > y) != (y2 > y):
-            xi = x1 + (y - y1) / (y2 - y1) * (x2 - x1)
-            if x < xi:
-                inside = not inside
-    return inside
+    def point_in_ring(pt, ring):
+        x, y = pt
+        inside = False
+        for i in range(len(ring) - 1):
+            x1, y1 = ring[i]
+            x2, y2 = ring[i + 1]
+            if (y1 > y) != (y2 > y):
+                xi = x1 + (y - y1) / (y2 - y1) * (x2 - x1)
+                if x < xi:
+                    inside = not inside
+        return inside
 
 
-geom_by_id = {f["properties"]["id"]: f["geometry"]["coordinates"] for f in features}
+    geom_by_id = {f["properties"]["id"]: f["geometry"]["coordinates"] for f in features}
 
-# Анклав (Норильск, Зеленогорск, ЗАТО) не делит way с окружающим округом, поэтому
-# в графе повисает без рёбер: огонь в него не придёт и из него не выйдет.
-# Связываем по вхождению центроида в чужой полигон.
-for rid, m in meta.items():
-    if m["neighbors"]:
-        continue
-    host = next(
-        (oid for oid, polys in geom_by_id.items()
-         if oid != rid and any(point_in_ring(m["centroid"], poly[0]) for poly in polys)),
-        None,
-    )
-    if host is None:
-        print(f"  ВНИМАНИЕ: {m['name']} остался без соседей")
-        continue
-    edge_km = round(m["perimeter"], 1)
-    meta[rid]["neighbors"].append({"to": host, "km": edge_km, "w": 1.0})
-    meta[host]["neighbors"].append({"to": rid, "km": edge_km,
-                                    "w": round(min(1.0, edge_km / meta[host]["perimeter"]), 4)})
-    print(f"  анклав: {m['name']} → вложен в {meta[host]['name']}")
+    # Анклав (Норильск, Зеленогорск, ЗАТО) не делит way с окружающим округом, поэтому
+    # в графе повисает без рёбер: огонь в него не придёт и из него не выйдет.
+    # Связываем по вхождению центроида в чужой полигон.
+    for rid, m in meta.items():
+        if m["neighbors"]:
+            continue
+        host = next(
+            (oid for oid, polys in geom_by_id.items()
+             if oid != rid and any(point_in_ring(m["centroid"], poly[0]) for poly in polys)),
+            None,
+        )
+        if host is None:
+            print(f"  ВНИМАНИЕ: {m['name']} остался без соседей")
+            continue
+        edge_km = round(m["perimeter"], 1)
+        meta[rid]["neighbors"].append({"to": host, "km": edge_km, "w": 1.0})
+        meta[host]["neighbors"].append({"to": rid, "km": edge_km,
+                                        "w": round(min(1.0, edge_km / meta[host]["perimeter"]), 4)})
+        print(f"  анклав: {m['name']} → вложен в {meta[host]['name']}")
 
-# Сумма площадей выходит больше официальной: анклавы считаются и сами по себе,
-# и внутри округов, которые их окружают. Игре важно, чтобы «выгорело N га»
-# сравнивалось с реальными сводками, поэтому нормируем на официальную цифру.
-OFFICIAL_KM2 = 2_366_797
-computed = sum(m["area"] for m in meta.values())
-scale = OFFICIAL_KM2 / computed
-for m in meta.values():
-    m["area"] = round(m["area"] * scale)
-print(f"\nКалибровка площади: {computed:,} → {OFFICIAL_KM2:,} км² (×{scale:.4f})"
-      .replace(",", " "))
+    # Сумма площадей выходит больше официальной: анклавы считаются и сами по себе,
+    # и внутри округов, которые их окружают. Игре важно, чтобы «выгорело N га»
+    # сравнивалось с реальными сводками, поэтому нормируем на официальную цифру.
+    OFFICIAL_KM2 = 2_366_797
+    computed = sum(m["area"] for m in meta.values())
+    scale = OFFICIAL_KM2 / computed
+    for m in meta.values():
+        m["area"] = round(m["area"] * scale)
+    print(f"\nКалибровка площади: {computed:,} → {OFFICIAL_KM2:,} км² (×{scale:.4f})"
+          .replace(",", " "))
 
-OUT.mkdir(exist_ok=True)
-gj = {"type": "FeatureCollection", "features": features}
-(OUT / "districts.geojson").write_text(json.dumps(gj, ensure_ascii=False,
-                                                  separators=(",", ":")), encoding="utf-8")
-(OUT / "adjacency.json").write_text(json.dumps(meta, ensure_ascii=False,
-                                               separators=(",", ":")), encoding="utf-8")
+    OUT.mkdir(exist_ok=True)
+    gj = {"type": "FeatureCollection", "features": features}
+    (OUT / "districts.geojson").write_text(json.dumps(gj, ensure_ascii=False,
+                                                      separators=(",", ":")), encoding="utf-8")
+    (OUT / "adjacency.json").write_text(json.dumps(meta, ensure_ascii=False,
+                                                   separators=(",", ":")), encoding="utf-8")
 
-size = (OUT / "districts.geojson").stat().st_size
-print(f"\nТочек: {raw_pts} → {simp_pts} (в {raw_pts / max(1, simp_pts):.1f} раза меньше)")
-print(f"districts.geojson: {size / 1024:.0f} КБ, объектов {len(features)}")
-print(f"Суммарная площадь: {sum(m['area'] for m in meta.values()):,} км²".replace(",", " "))
-print(f"Рёбер в графе: {sum(len(m['neighbors']) for m in meta.values()) // 2}")
+    size = (OUT / "districts.geojson").stat().st_size
+    print(f"\nТочек: {raw_pts} → {simp_pts} (в {raw_pts / max(1, simp_pts):.1f} раза меньше)")
+    print(f"districts.geojson: {size / 1024:.0f} КБ, объектов {len(features)}")
+    print(f"Суммарная площадь: {sum(m['area'] for m in meta.values()):,} км²".replace(",", " "))
+    print(f"Рёбер в графе: {sum(len(m['neighbors']) for m in meta.values()) // 2}")
 
-iso = [m["name"] for m in meta.values() if not m["neighbors"]]
-if iso:
-    print(f"БЕЗ СОСЕДЕЙ ({len(iso)}): {iso}")
+    iso = [m["name"] for m in meta.values() if not m["neighbors"]]
+    if iso:
+        print(f"БЕЗ СОСЕДЕЙ ({len(iso)}): {iso}")
+
+
+
+if __name__ == "__main__":
+    main()

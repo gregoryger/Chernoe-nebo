@@ -23,15 +23,16 @@ import type { District, DistrictId, WorldState } from './sim/types';
 const SPEED_MS = [0, 1000, 500, 200];
 
 async function boot() {
-  const [geojson, meta, rivers] = await Promise.all([
+  const [geojson, meta, rivers, outline] = await Promise.all([
     fetch('data/districts.geojson').then((r) => r.json()) as Promise<GeoJSON.FeatureCollection>,
     fetch('data/districts.meta.json').then((r) => r.json()) as Promise<Record<string, RawDistrict>>,
     fetch('data/rivers.geojson').then((r) => r.json()) as Promise<GeoJSON.FeatureCollection>,
+    fetch('data/krai_outline.geojson').then((r) => r.json()) as Promise<GeoJSON.FeatureCollection>,
   ]);
 
   const districts: Record<DistrictId, District> = loadDistricts(meta);
   const uiRoot = document.getElementById('ui')!;
-  const mapView = new MapView('map', geojson, districts, rivers);
+  const mapView = new MapView('map', geojson, districts, rivers, outline);
   const hud = new Hud(uiRoot);
   const tree = new TreeView(uiRoot);
 

@@ -5,6 +5,7 @@ import type { District, DistrictId, WorldState } from '../sim/types';
 const SOURCE = 'districts';
 const RIVERS = 'rivers';
 const MASK = 'mask';
+const BORDER = 'border';
 
 /**
  * Карта края на спутниковой подложке.
@@ -27,10 +28,12 @@ export class MapView {
   private readonly geojson: GeoJSON.FeatureCollection;
   private readonly rivers: GeoJSON.FeatureCollection;
   private readonly mask: GeoJSON.Feature;
+  private readonly outline: GeoJSON.FeatureCollection;
 
   constructor(container: string, geojson: GeoJSON.FeatureCollection,
               districts: Record<DistrictId, District>,
-              rivers: GeoJSON.FeatureCollection) {
+              rivers: GeoJSON.FeatureCollection,
+              outline: GeoJSON.FeatureCollection) {
     // Признаки, по которым стилизуются обводки, кладём в properties: dasharray
     // в MapLibre не управляется данными, поэтому зоны контроля рисуются
     // отдельным слоем с фильтром.
@@ -93,14 +96,21 @@ export class MapView {
     this.geojson = geojson;
     this.rivers = rivers;
 
-    // Снимок за пределами края такой же яркий, как внутри, и игровое поле
-    // в нём теряется. Затемняем всё вокруг: многоугольник на весь мир, в
-    // котором внешние кольца округов вырезаны дырами.
-    const holes: GeoJSON.Position[][] = [];
-    for (const f of geojson.features) {
-      const g = f.geometry as GeoJSON.MultiPolygon;
-      for (const poly of g.coordinates) holes.push(poly[0]);
-    }
+    /*
+     * Снимок за пределами края такой же яркий, как внутри, и игровое поле
+     * в нём теряется. Затемняем всё вокруг: многоугольник на весь мир с
+     * дырой по контуру края.
+     *
+     * Первая версия вырезала 51 дыру — по внешнему кольцу каждого округа.
+     * Такая фигура не триангулируется: маска шла тёмными полосами, а то и
+     * накрывала карту целиком. Дыра должна быть одна, поэтому берём готовый
+     * контур края (tools/step6_outline.py) и из него — крупнейшее кольцо,
+     * материковую часть. Острова в Карском море под маской: их всё равно
+     * не поджечь.
+     */
+    this.outline = outline;
+    const rings = (outline.features[0].geometry as GeoJSON.MultiPolygon).coordinates;
+    const mainland = rings.reduce((a, b) => (b[0].length > a[0].length ? b : a))[0];
     this.mask = {
       type: 'Feature',
       properties: {},
@@ -108,7 +118,7 @@ export class MapView {
         type: 'Polygon',
         coordinates: [
           [[-180, -85], [180, -85], [180, 85], [-180, 85], [-180, -85]],
-          ...holes,
+          mainland,
         ],
       },
     };
@@ -131,17 +141,37 @@ export class MapView {
       }).observe(el);
     }
 
+    // MapLibre молча глотает исключения из обработчика load: слои просто не
+    // появляются, а в консоли пусто. Ловим сами.
     this.map.on('load', () => {
+      try {
+        this.buildLayers();
+      } catch (err) {
+        console.error('[mapView] сборка слоёв упала:', err);
+        (window as unknown as { __mapErr: unknown[] }).__mapErr?.push(String(err));
+      }
+    });
+  }
+
+  private buildLayers(): void {
       this.map.addSource(SOURCE, {
         type: 'geojson',
-        data: geojson,
+        data: this.geojson,
         promoteId: 'id',
       });
 
       this.map.addSource(MASK, { type: 'geojson', data: this.mask });
       this.map.addLayer({
         id: 'mask', type: 'fill', source: MASK,
-        paint: { 'fill-color': '#080B0D', 'fill-opacity': 0.74 },
+        paint: { 'fill-color': '#080B0D', 'fill-opacity': 0.72 },
+      });
+
+      // Граница края целиком, включая острова: маска их не выделяет, а рамка
+      // игрового поля должна быть замкнутой.
+      this.map.addSource(BORDER, { type: 'geojson', data: this.outline });
+      this.map.addLayer({
+        id: 'border', type: 'line', source: BORDER,
+        paint: { 'line-color': '#C8D4D8', 'line-width': 1.6, 'line-opacity': 0.75 },
       });
 
       this.map.addLayer({
@@ -232,13 +262,12 @@ export class MapView {
         this.map.getCanvas().style.cursor = '';
       });
 
-      this.ready = true;
-      const box = this.map.getContainer();
-      if (box.clientWidth > 0 && box.clientHeight > 0) {
-        this.fitKrai();
-        this.fitted = true;
-      }
-    });
+    this.ready = true;
+    const box = this.map.getContainer();
+    if (box.clientWidth > 0 && box.clientHeight > 0) {
+      this.fitKrai();
+      this.fitted = true;
+    }
   }
 
   /**
