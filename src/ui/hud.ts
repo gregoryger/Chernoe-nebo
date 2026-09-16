@@ -30,7 +30,8 @@ export class Hud {
         <div class="cell speeds">
           <button data-speed="0" class="sp" title="Пауза (пробел)">Пауза</button>
           <button data-speed="1" class="sp on" title="Обычная скорость">1&times;</button>
-          <button data-speed="2" class="sp" title="Ускоренно">3&times;</button>
+          <button data-speed="2" class="sp" title="Вдвое быстрее">2&times;</button>
+          <button data-speed="3" class="sp" title="Пятикратно">5&times;</button>
         </div>
       </div>
 

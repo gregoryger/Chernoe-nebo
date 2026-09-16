@@ -34,11 +34,29 @@ export const fillColorExpression = [
   ],
 ] as unknown as maplibregl.ExpressionSpecification;
 
-/** Необнаруженный пожар приглушён: игрок видит тление, но не полную картину. */
+/**
+ * Непрозрачность заливки.
+ *
+ * Под картой лежит спутниковый снимок, поэтому целый лес закрашивать незачем —
+ * настоящая тайга на снимке выразительнее любой заливки. Плотность растёт
+ * вместе с огнём: чем сильнее горит, тем меньше видно землю под пожаром.
+ * Необнаруженный очаг дополнительно приглушён — игрок видит тление, но не
+ * полную картину.
+ */
 export const fillOpacityExpression = [
-  'case',
-  ['==', ['coalesce', ['feature-state', 'known'], 0], 0], 0.55,
-  0.92,
+  '*',
+  [
+    'case',
+    ['<', ['coalesce', ['feature-state', 'f'], 1], BURNED_OUT], 0.78,
+    [
+      'interpolate', ['linear'], ['coalesce', ['feature-state', 'b'], 0],
+      0, 0.20,
+      0.02, 0.40,
+      0.25, 0.66,
+      1, 0.85,
+    ],
+  ],
+  ['case', ['==', ['coalesce', ['feature-state', 'known'], 0], 0], 0.6, 1],
 ] as unknown as maplibregl.ExpressionSpecification;
 
 export function describeState(b: number, f: number): string {

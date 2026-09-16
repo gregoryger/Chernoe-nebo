@@ -3,13 +3,21 @@ import { fillColorExpression, fillOpacityExpression } from './ramp';
 import type { District, DistrictId, WorldState } from '../sim/types';
 
 const SOURCE = 'districts';
+const RIVERS = 'rivers';
+const MASK = 'mask';
 
 /**
- * Карта края без подложки: только полигоны округов на глухом фоне.
+ * Карта края на спутниковой подложке.
  *
- * Подложка здесь мешала бы — состояние района читается цветом, и спутник или
- * карта OSM конкурировали бы с ним за внимание. Побочно это снимает загрузку
- * тайлов: игра работает полностью офлайн после первой загрузки.
+ * Изначально подложки не было — считалось, что снимок конкурирует с цветом
+ * состояния за внимание. На практике вышло наоборот: пустые многоугольники
+ * не давали понять, где тайга, где степь и где горы, и карта читалась как
+ * схема, а не как местность. Конфликт снят прозрачностью: целый округ почти
+ * не закрашен и показывает настоящий лес, а плотность заливки растёт вместе
+ * с огнём.
+ *
+ * Снимки — ESRI World Imagery, без ключа; требуется указание источника,
+ * поэтому атрибуция включена.
  */
 export class MapView {
   readonly map: maplibregl.Map;
@@ -17,9 +25,12 @@ export class MapView {
   private fitted = false;
   private onPick?: (id: DistrictId) => void;
   private readonly geojson: GeoJSON.FeatureCollection;
+  private readonly rivers: GeoJSON.FeatureCollection;
+  private readonly mask: GeoJSON.Feature;
 
   constructor(container: string, geojson: GeoJSON.FeatureCollection,
-              districts: Record<DistrictId, District>) {
+              districts: Record<DistrictId, District>,
+              rivers: GeoJSON.FeatureCollection) {
     // Признаки, по которым стилизуются обводки, кладём в properties: dasharray
     // в MapLibre не управляется данными, поэтому зоны контроля рисуются
     // отдельным слоем с фильтром.
@@ -27,7 +38,9 @@ export class MapView {
       const id = (f.properties as { id: string }).id;
       const d = districts[id];
       if (d) {
-        f.properties = { ...f.properties, ctrl: d.ctrlZone ? 1 : 0, pop: d.pop };
+        f.properties = {
+          ...f.properties, ctrl: d.ctrlZone ? 1 : 0, pop: d.pop, forest: d.forest,
+        };
       }
     }
 
@@ -35,16 +48,35 @@ export class MapView {
       container,
       style: {
         version: 8,
-        sources: {},
+        sources: {
+          sat: {
+            type: 'raster',
+            tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/'
+              + 'World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+            tileSize: 256,
+            maxzoom: 17,
+            attribution: 'Esri, Maxar, Earthstar Geographics',
+          },
+        },
         // Ключ glyphs не задаём вовсе: MapLibre валидирует его как строку,
         // если он присутствует, и падает на `glyphs: undefined`. Подписей
         // средствами карты здесь нет — названия живут в панели района.
-        layers: [{ id: 'bg', type: 'background', paint: { 'background-color': '#0F1315' } }],
+        layers: [
+          { id: 'bg', type: 'background', paint: { 'background-color': '#0F1315' } },
+          // Снимок приглушён: поверх него читаются заливка пожара и обводки,
+          // а полная яркость спутника перетягивала бы внимание на себя.
+          {
+            id: 'sat', type: 'raster', source: 'sat',
+            paint: { 'raster-opacity': 0.82, 'raster-saturation': -0.25 },
+          },
+        ],
       },
       center: [95, 62],
       zoom: 3,
-      attributionControl: false,
+      attributionControl: { compact: true },
       dragRotate: false,
+      minZoom: 1.8,
+      maxZoom: 11,
       // Без этого MapLibre повторяет мир по горизонтали, и на малом зуме
       // в кадр влезает несколько копий края разом.
       renderWorldCopies: false,
@@ -59,6 +91,30 @@ export class MapView {
     }
 
     this.geojson = geojson;
+    this.rivers = rivers;
+
+    // Снимок за пределами края такой же яркий, как внутри, и игровое поле
+    // в нём теряется. Затемняем всё вокруг: многоугольник на весь мир, в
+    // котором внешние кольца округов вырезаны дырами.
+    const holes: GeoJSON.Position[][] = [];
+    for (const f of geojson.features) {
+      const g = f.geometry as GeoJSON.MultiPolygon;
+      for (const poly of g.coordinates) holes.push(poly[0]);
+    }
+    this.mask = {
+      type: 'Feature',
+      properties: {},
+      geometry: {
+        type: 'Polygon',
+        coordinates: [
+          [[-180, -85], [180, -85], [180, 85], [-180, 85], [-180, -85]],
+          ...holes,
+        ],
+      },
+    };
+
+    this.map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
+    this.map.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-right');
 
     // Контейнер может быть ещё нулевым в момент конструирования (шрифты,
     // раскладка, вкладка в фоне). Тогда карта остаётся пустой, а fitBounds по
@@ -82,6 +138,12 @@ export class MapView {
         promoteId: 'id',
       });
 
+      this.map.addSource(MASK, { type: 'geojson', data: this.mask });
+      this.map.addLayer({
+        id: 'mask', type: 'fill', source: MASK,
+        paint: { 'fill-color': '#080B0D', 'fill-opacity': 0.74 },
+      });
+
       this.map.addLayer({
         id: 'fill', type: 'fill', source: SOURCE,
         paint: {
@@ -101,10 +163,35 @@ export class MapView {
         },
       });
 
+      this.map.addSource(RIVERS, { type: 'geojson', data: this.rivers });
+
+      // Барьерные реки рисуются ПОВЕРХ заливки: если убрать их под неё, они
+      // исчезали бы ровно там, где горит, то есть там, где игрок про них
+      // и вспоминает. Свечение — широкая размытая линия под тонкой яркой.
+      this.map.addLayer({
+        id: 'rivers-glow', type: 'line', source: RIVERS,
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-color': '#2BA3E3',
+          'line-blur': 3.5,
+          'line-opacity': 0.5,
+          'line-width': ['interpolate', ['linear'], ['zoom'], 3, 5, 8, 16],
+        } as unknown as maplibregl.LineLayerSpecification['paint'],
+      });
+      this.map.addLayer({
+        id: 'rivers-core', type: 'line', source: RIVERS,
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-color': '#9BE0FF',
+          'line-opacity': 0.9,
+          'line-width': ['interpolate', ['linear'], ['zoom'], 3, 1.4, 8, 4],
+        } as unknown as maplibregl.LineLayerSpecification['paint'],
+      });
+
       this.map.addLayer({
         id: 'outline', type: 'line', source: SOURCE,
         filter: ['==', ['get', 'ctrl'], 0],
-        paint: { 'line-color': '#0B0E10', 'line-width': 0.8 },
+        paint: { 'line-color': '#E3EAEC', 'line-width': 0.9, 'line-opacity': 0.5 },
       });
 
       // Зона контроля — пунктир: сюда не выезжают, пока не станет поздно.
@@ -154,9 +241,21 @@ export class MapView {
     });
   }
 
+  /**
+   * Вписать лесную часть края, а не весь край.
+   *
+   * Таймыр уходит за 81° с. ш., и в проекции Меркатора приполярные широты
+   * растягиваются так, что вмещение всего края требует зума 2.4 вместо 3.3:
+   * обжитой юг, где и происходит игра, сжимается в нечитаемую полоску. Тундра
+   * Таймыра при fuelClass 1 почти не горит, поэтому по умолчанию кадрируем по
+   * округам с лесистостью от 25% — север остаётся доступен панорамированием.
+   */
   private fitKrai(): void {
     const b = new maplibregl.LngLatBounds();
-    for (const f of this.geojson.features) {
+    const forested = this.geojson.features.filter(
+      (f) => ((f.properties as { forest?: number }).forest ?? 0) >= 0.25,
+    );
+    for (const f of (forested.length ? forested : this.geojson.features)) {
       const g = f.geometry as GeoJSON.MultiPolygon;
       for (const poly of g.coordinates) {
         for (const ring of poly) {

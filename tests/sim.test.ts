@@ -124,14 +124,42 @@ describe('эволюции', () => {
     expect(computeModifiers(['A1', 'A2', 'A4']).riverBarrierMult).toBeLessThan(1);
   });
 
-  it('распространение увеличивает выгоревшую площадь', () => {
-    // Распределение исходов бимодально, поэтому шести семян не хватало:
-    // тест падал на шуме, а не на регрессии. Сравниваем медианы на 24 партиях.
-    const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[xs.length >> 1];
+  /*
+   * Польза от ветки распространения зависит от старта, и сильно.
+   *
+   * Замер по 40 партиям на сценарий: Минусинск ×4.3, Богучаны ×2.7,
+   * Емельяново ×2.5, Эвенкия всего ×1.5. Эвенкия выбивается не из-за ошибки,
+   * а из-за размера: она одна выжигает 220 тыс. га вообще без покупок, и
+   * распространяться оттуда особо некуда — семь соседей, все далеко.
+   * Поэтому единый порог здесь неуместен: слабый проверяет всё, сильный
+   * падает на Эвенкии.
+   */
+  const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[xs.length >> 1];
+  const spreadGain = (start: string): number => {
+    const from = findStart(districts, start);
+    const play = (seed: number, buys: string[]) => {
+      const s = createWorld(districts, from, seed);
+      while (s.status === 'running') {
+        for (const id of buys) if (canBuy(id, s.bought, s.sparks)) buy(s, id, BY_ID[id].cost);
+        tick(s, districts);
+      }
+      return s.totalBurned;
+    };
     const seeds = Array.from({ length: 24 }, (_, i) => 11 + i * 37);
-    const withEvo = median(seeds.map((s) => run(s, ['A1', 'A2', 'A4', 'A3', 'A5']).totalBurned));
-    const without = median(seeds.map((s) => run(s).totalBurned));
-    expect(withEvo).toBeGreaterThan(without * 1.5);
+    const withEvo = median(seeds.map((s) => play(s, ['A1', 'A2', 'A4', 'A3', 'A5'])));
+    const without = median(seeds.map((s) => play(s, [])));
+    return withEvo / without;
+  };
+
+  it('распространение помогает в любом сценарии', () => {
+    for (const start of ['Эвенкийский', 'Богучанский', 'Минусинский', 'Емельяновский']) {
+      expect(spreadGain(start)).toBeGreaterThan(1.2);
+    }
+  });
+
+  it('из компактного округа распространение решает вдвое', () => {
+    // Богучаны — представительный средний случай: средняя тайга, пять соседей.
+    expect(spreadGain('Богучанский')).toBeGreaterThan(2);
   });
 });
 
