@@ -1,3 +1,5 @@
+import type { ExpressionSpecification } from 'maplibre-gl';
+
 /**
  * Цветовая шкала района.
  *
@@ -32,7 +34,7 @@ export const fillColorExpression = [
     0.6, FIRE.strong,
     1, FIRE.total,
   ],
-] as unknown as maplibregl.ExpressionSpecification;
+] as unknown as ExpressionSpecification;
 
 /**
  * Непрозрачность заливки.
@@ -57,7 +59,7 @@ export const fillOpacityExpression = [
     ],
   ],
   ['case', ['==', ['coalesce', ['feature-state', 'known'], 0], 0], 0.6, 1],
-] as unknown as maplibregl.ExpressionSpecification;
+] as unknown as ExpressionSpecification;
 
 export function describeState(b: number, f: number): string {
   if (f < BURNED_OUT) return 'выгорел';

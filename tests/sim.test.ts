@@ -1,17 +1,22 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { BY_ID, EVOLUTIONS, canBuy, computeModifiers } from '../src/sim/evolutions';
-import { tick } from '../src/sim/tick';
+import { SILVER, tick } from '../src/sim/tick';
+import * as rng from '../src/sim/rng';
+import { stepResponse } from '../src/sim/response';
+import type { District, WorldState } from '../src/sim/types';
 import {
   THROW_BASE, THROW_STEP, buy, canThrow, createWorld, emberThrow, findStart,
   loadDistricts, setFocus, sizeFactor, throwCost,
 } from '../src/sim/world';
 import type { RawDistrict } from '../src/sim/world';
-import { SEASON_TICKS, droughtBase, formatDate } from '../src/sim/weather';
+import { CYCLONE_DAY, SEASON_TICKS, TICKS_PER_DAY, droughtBase, formatDate, stepWeather } from '../src/sim/weather';
 
 const raw = JSON.parse(readFileSync('data/districts.meta.json', 'utf-8')) as Record<string, RawDistrict>;
 const districts = loadDistricts(raw);
 const evenkia = findStart(districts, 'Эвенкийский');
+
+afterEach(() => vi.restoreAllMocks());
 
 function run(seed: number, buys: string[] = [], ticks = SEASON_TICKS) {
   const s = createWorld(districts, evenkia, seed);
@@ -54,6 +59,64 @@ describe('данные', () => {
 });
 
 describe('симуляция', () => {
+  it('несколько источников дают одну новость о новом округе', () => {
+    const local: Record<string, District> = Object.fromEntries(
+      ['left', 'right', 'target'].map((id) => [id, {
+        ...districts[evenkia], id,
+        neighbors: id === 'target' ? [] : [
+          { to: 'target', w: 1, barrier: 0, river: 0, road: 0, bearing: 0 },
+        ],
+      }]),
+    );
+    const s = createWorld(local, 'left', 7);
+    s.districts.left.B = 0.5;
+    s.districts.right.B = 0.5;
+    s.districts.right.ignited = true;
+    s.weather.event = 'squall';
+    s.weather.eventTicks = 2;
+    vi.spyOn(rng, 'rnd').mockReturnValue(0);
+    tick(s, local);
+    expect(s.districts.target.ignited).toBe(true);
+    expect(s.events.filter((event) => event.kind === 'spread')).toHaveLength(1);
+  });
+
+  it('затухший очаг не удерживает партию активной', () => {
+    vi.spyOn(rng, 'rnd').mockReturnValue(0.9);
+    const s = createWorld(districts, evenkia, 7);
+    s.tick = 20;
+    s.districts[evenkia].B = 0.00005;
+    tick(s, districts);
+    expect(s.districts[evenkia].B).toBe(0);
+    expect(s.status).toBe('lost');
+    expect(s.events.filter((event) => event.kind === 'end')).toHaveLength(1);
+    const ended = structuredClone(s);
+    tick(s, districts);
+    expect(s).toEqual(ended);
+  });
+
+  it('полностью выгоревший очаг гаснет', () => {
+    vi.spyOn(rng, 'rnd').mockReturnValue(0.9);
+    const s = createWorld(districts, evenkia, 7);
+    s.tick = 20;
+    s.districts[evenkia].F = 0;
+    tick(s, districts);
+    expect(s.status).toBe('lost');
+    expect(s.totalBurned).toBe(0);
+  });
+
+  it('циклон сохраняет заработанный ранг до конца сезона', () => {
+    const s = createWorld(districts, evenkia, 7);
+    s.tick = CYCLONE_DAY * TICKS_PER_DAY;
+    s.totalBurned = SILVER;
+    for (const id of s.ids) s.districts[id].B = 0;
+    tick(s, districts);
+    expect(s.status).toBe('running');
+    s.tick = SEASON_TICKS - 1;
+    tick(s, districts);
+    expect(s.status).toBe('won');
+    expect(s.grade).toBe('silver');
+  });
+
   it('детерминирована по seed', () => {
     const a = run(42);
     const b = run(42);
@@ -94,6 +157,50 @@ describe('симуляция', () => {
 });
 
 describe('эволюции', () => {
+  it('покупка проверяет цену, предка и существование узла', () => {
+    const s = createWorld(districts, evenkia, 3);
+    s.sparks = 100;
+    for (const [id, price] of [['A2', 15], ['missing', 0], ['A1', -10], ['A1', 0], ['A1', NaN]] as const) {
+      expect(buy(s, id, price)).toBe(false);
+    }
+    expect(s.sparks).toBe(100);
+    expect(s.bought).toEqual([]);
+    expect(buy(s, 'A1')).toBe(true);
+    expect(s.sparks).toBe(95);
+  });
+
+  it.each([1, 2, 3, 4, 5] as const)('верховой пожар учитывает тип леса %i', (fuelClass) => {
+    vi.spyOn(rng, 'rnd').mockReturnValue(0.9);
+    const local = { [evenkia]: { ...districts[evenkia], fuelClass, neighbors: [] } };
+    const growth = (buys: string[]) => {
+      const s = createWorld(local, evenkia, 7);
+      s.mods = computeModifiers(buys);
+      s.districts[evenkia].B = 0.1;
+      tick(s, local);
+      return s.districts[evenkia].B - 0.1;
+    };
+    const crownMultiplier = fuelClass >= 2 && fuelClass <= 4 ? 1.4 : 1;
+    expect(growth(['A1', 'A2']) / growth(['A1'])).toBeCloseTo(crownMultiplier, 8);
+  });
+
+  it.each([1, 2, 3, 4, 5] as const)('верховой переброс усиливается только из хвойного леса: тип %i', (fuelClass) => {
+    const local: Record<string, District> = {
+      source: {
+        ...districts[evenkia], id: 'source', fuelClass,
+        neighbors: [{ to: 'target', w: 1, barrier: 0, river: 0, road: 0, bearing: 0 }],
+      },
+      target: { ...districts[evenkia], id: 'target', neighbors: [] },
+    };
+    const s = createWorld(local, 'source', 7);
+    s.mods = computeModifiers(['A1', 'A2']);
+    s.districts.source.B = 1;
+    s.weather.windDir = 0;
+    s.weather.targetDir = 0;
+    vi.spyOn(rng, 'rnd').mockReturnValue(0.15);
+    tick(s, local);
+    expect(s.districts.target.ignited).toBe(fuelClass >= 2 && fuelClass <= 4);
+  });
+
   it('узел нельзя купить без предка', () => {
     expect(canBuy('A2', [], 999)).toBe(false);
     expect(canBuy('A2', ['A1'], 999)).toBe(true);
@@ -191,6 +298,16 @@ describe('эволюции', () => {
 });
 
 describe('погода и календарь', () => {
+  it.each([10, 95])('шквалы возможны на %i-е сутки', (day) => {
+    const s = createWorld(districts, evenkia, 7);
+    s.tick = day * TICKS_PER_DAY;
+    s.weather.nextShift = Infinity;
+    vi.spyOn(rng, 'rnd').mockReturnValue(day === 95 ? 0.06 : 0.03);
+    stepWeather(s);
+    expect(s.weather.event).toBe('squall');
+    expect(s.weather.W).toBeGreaterThanOrEqual(1.5);
+  });
+
   it('сезон идёт с 15 апреля по 30 сентября', () => {
     expect(formatDate(0)).toBe('15 апреля');
     expect(formatDate(SEASON_TICKS - 1)).toBe('30 сентября');
@@ -207,6 +324,31 @@ describe('погода и календарь', () => {
 });
 
 describe('управление направлением', () => {
+  it.each(['won', 'lost'] as const)('после исхода %s действия не меняют партию', (status) => {
+    const s = createWorld(districts, evenkia, 5);
+    s.status = status;
+    s.sparks = 500;
+    s.districts[evenkia].B = 0.4;
+    const neighbour = districts[evenkia].neighbors[0].to;
+    const ended = structuredClone(s);
+    expect(buy(s, 'A1')).toBe(false);
+    expect(canThrow(s, districts, neighbour)).toBe(false);
+    expect(emberThrow(s, districts, neighbour)).toBe(false);
+    setFocus(s, neighbour);
+    tick(s, districts);
+    expect(s).toEqual(ended);
+  });
+
+  it('несуществующий округ не становится целью', () => {
+    const s = createWorld(districts, evenkia, 5);
+    for (const id of ['missing', '__proto__']) {
+      setFocus(s, id);
+      expect(s.focus).toBeNull();
+      expect(canThrow(s, districts, id)).toBe(false);
+    }
+    expect(() => tick(s, districts)).not.toThrow();
+  });
+
   it('фокус повышает шанс перехода в выбранный округ', () => {
     // Эффект вероятностный, поэтому меряем долю партий, где цель загорелась,
     // на одних и тех же семенах с фокусом и без.
@@ -279,5 +421,41 @@ describe('управление направлением', () => {
     expect(throwCost(s)).toBe(THROW_BASE);
     s.throws = 2;
     expect(throwCost(s)).toBe(THROW_BASE + 2 * THROW_STEP);
+  });
+});
+
+describe('встречный отжиг', () => {
+  const setup = (): { s: WorldState; local: Record<string, District> } => {
+    const source: District = {
+      ...districts[evenkia], id: 'source', ctrlZone: false, pop: 0,
+      neighbors: [{ to: 'target', w: 1, barrier: 0, river: 0, road: 0, bearing: 0 }],
+    };
+    const target: District = { ...source, id: 'target', neighbors: [] };
+    const local = { source, target };
+    const s = createWorld(local, 'source', 7);
+    s.escalation = 4;
+    s.districts.source.known = true;
+    s.districts.source.B = 0.5;
+    s.districts.source.S = 10;
+    vi.spyOn(rng, 'rnd').mockReturnValue(0);
+    return { s, local };
+  };
+
+  it('новый округ получает отметку возгорания и однократный бонус', () => {
+    const { s, local } = setup();
+    stepResponse(s, local);
+    expect(s.districts.target.B).toBe(0.05);
+    expect(s.districts.target.ignited).toBe(true);
+    expect(s.sparks).toBe(10);
+    stepResponse(s, local);
+    expect(s.sparks).toBe(10);
+  });
+
+  it('охват не превышает площадь округа', () => {
+    const { s, local } = setup();
+    s.districts.target.B = 0.99;
+    s.districts.target.ignited = true;
+    stepResponse(s, local);
+    expect(s.districts.target.B).toBe(1);
   });
 });

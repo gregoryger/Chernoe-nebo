@@ -1,7 +1,7 @@
 import { rnd } from './rng';
 import { stepResponse } from './response';
 import { SEASON_TICKS, TICKS_PER_DAY, stepWeather } from './weather';
-import { bearing } from './world';
+import { SPARK_PER_DISTRICT, bearing } from './world';
 import type { District, DistrictId, Grade, WorldState } from './types';
 
 /**
@@ -18,8 +18,6 @@ const CONSUME = 0.00074;
  * двигают огонь, и урезание дохода просто душило партию. Дефицит создаётся
  * ценами в дереве, а не скоростью накопления. */
 const HA_PER_SPARK = 10_000;
-/** Искр за каждый впервые загоревшийся район. */
-const SPARK_PER_DISTRICT = 10;
 
 /*
  * Пороги калиброваны по прогону, а не выбраны заранее.
@@ -98,10 +96,12 @@ export function tick(s: WorldState, districts: Record<DistrictId, District>): Wo
     const st = s.districts[id];
     const d = districts[id];
 
+    if (st.F <= 0) st.B = 0;
     if (st.B > 0.0001) {
       // «Верховой пожар» уже учтён в mods.r, но кроны есть только в тайге —
       // в тундре и лесостепи прибавку снимаем.
-      const r = s.mods.crownFire && d.fuelClass < 3 ? s.mods.r / 1.4 : s.mods.r;
+      const r = s.mods.crownFire && (d.fuelClass === 1 || d.fuelClass === 5)
+        ? s.mods.r / 1.4 : s.mods.r;
 
       // sizeFactor здесь НЕ применяется: за «гигантский округ не выгорает
       // целиком» отвечает d.budget в пересчёте гектаров. Два механизма на одну
@@ -138,6 +138,7 @@ export function tick(s: WorldState, districts: Record<DistrictId, District>): Wo
         st.smoke = Math.min(1, st.smoke * 0.96 + st.B * 0.12);
       }
     } else {
+      st.B = 0;
       st.smoke *= 0.9;
       // «Тление»: потушенный район может вспыхнуть заново.
       if (s.mods.smolder > 0 && st.ignited && st.F > 0.05 && rnd(s) < s.mods.smolder) {
@@ -176,6 +177,8 @@ export function tick(s: WorldState, districts: Record<DistrictId, District>): Wo
     const st = s.districts[id];
     if (st.B <= 0.01) continue;
     const d = districts[id];
+    const tau = s.mods.crownFire && (d.fuelClass === 1 || d.fuelClass === 5)
+      ? s.mods.tau / 1.3 : s.mods.tau;
 
     for (const e of d.neighbors) {
       const dst = s.districts[e.to];
@@ -191,7 +194,7 @@ export function tick(s: WorldState, districts: Record<DistrictId, District>): Wo
       const steppe = districts[e.to].forest < 0.35 ? s.mods.steppeSpread : 1;
 
       const align = 0.4 + 0.6 * Math.max(0, Math.cos(e.bearing - w.windDir));
-      const p = st.B * s.mods.tau * e.w * align * (1 - barrier) * dst.F * w.W
+      const p = st.B * tau * e.w * align * (1 - barrier) * dst.F * w.W
         * steppe * focusMultiplier(s, districts, d, e);
 
       if (rnd(s) < p) ignitions.push({ id: e.to, from: d.name });
@@ -205,7 +208,7 @@ export function tick(s: WorldState, districts: Record<DistrictId, District>): Wo
           if (e2.to === id || far.B > 0.01 || far.F < 0.05) continue;
           const align = 0.4 + 0.6 * Math.max(0, Math.cos(e2.bearing - w.windDir));
           if (align < 0.8) continue;
-          if (rnd(s) < st.B * s.mods.tau * 0.15 * align * far.F) {
+          if (rnd(s) < st.B * tau * 0.15 * align * far.F) {
             ignitions.push({ id: e2.to, from: `${d.name} (перенос искр)` });
           }
         }
@@ -213,9 +216,11 @@ export function tick(s: WorldState, districts: Record<DistrictId, District>): Wo
     }
   }
 
+  const spreadThisTick = new Set<DistrictId>();
   for (const ig of ignitions) {
     const st = s.districts[ig.id];
-    if (st.B > 0.01) continue;
+    if (st.B > 0.01 || spreadThisTick.has(ig.id)) continue;
+    spreadThisTick.add(ig.id);
     st.B = Math.max(st.B, 0.01);
     if (!st.ignited) {
       st.ignited = true;

@@ -1,11 +1,15 @@
-import maplibregl from 'maplibre-gl';
+import * as maplibregl from 'maplibre-gl';
+import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 import { fillColorExpression, fillOpacityExpression } from './ramp';
 import type { District, DistrictId, WorldState } from '../sim/types';
+import type * as GeoJSON from 'geojson';
 
 const SOURCE = 'districts';
 const RIVERS = 'rivers';
 const MASK = 'mask';
 const BORDER = 'border';
+
+maplibregl.setWorkerUrl(workerUrl);
 
 /**
  * Карта края на спутниковой подложке.
@@ -24,6 +28,12 @@ export class MapView {
   readonly map: maplibregl.Map;
   private ready = false;
   private fitted = false;
+  private overview = true;
+  private selected: DistrictId | null = null;
+  private pendingFocus: DistrictId | null = null;
+  private latestState?: WorldState;
+  private fatalError?: Error;
+  private errorHandler?: (error: Error) => void;
   private onPick?: (id: DistrictId) => void;
   private readonly geojson: GeoJSON.FeatureCollection;
   private readonly rivers: GeoJSON.FeatureCollection;
@@ -78,20 +88,27 @@ export class MapView {
       zoom: 3,
       attributionControl: { compact: true },
       dragRotate: false,
+      touchPitch: false,
+      pitchWithRotate: false,
+      maxPitch: 0,
       minZoom: 1.8,
       maxZoom: 11,
       // Без этого MapLibre повторяет мир по горизонтали, и на малом зуме
       // в кадр влезает несколько копий края разом.
       renderWorldCopies: false,
     });
+    this.map.touchZoomRotate.disableRotation();
+    this.map.keyboard.disableRotation();
+    this.map.getCanvas().setAttribute('aria-label', 'Карта лесных пожаров Красноярского края');
 
     if (import.meta.env.DEV) {
       (window as unknown as { __map: maplibregl.Map }).__map = this.map;
       (window as unknown as { __mapErr: unknown[] }).__mapErr = [];
-      this.map.on('error', (e) => {
-        (window as unknown as { __mapErr: unknown[] }).__mapErr.push(String(e.error ?? e));
-      });
     }
+    this.map.on('error', (event) => {
+      // Спутник необязателен: геометрия и состояние игры доступны без сети.
+      if (!('sourceId' in event) || event.sourceId !== 'sat') this.reportError(event.error);
+    });
 
     this.geojson = geojson;
     this.rivers = rivers;
@@ -132,23 +149,27 @@ export class MapView {
     // не по событию load, а при первом ненулевом размере.
     const el = document.getElementById(container);
     if (el) {
-      new ResizeObserver(() => {
+      const observer = new ResizeObserver(() => {
         this.map.resize();
-        if (!this.fitted && this.ready && el.clientWidth > 0 && el.clientHeight > 0) {
-          this.fitKrai();
-          this.fitted = true;
+        if (this.ready && el.clientWidth > 0 && el.clientHeight > 0) {
+          if (this.pendingFocus) this.focusDistrict(this.pendingFocus);
+          else if (!this.fitted || this.overview) this.resetView();
+          else this.map.setPadding(this.viewPadding());
         }
-      }).observe(el);
+      });
+      observer.observe(el);
+      this.map.once('remove', () => observer.disconnect());
     }
+    this.map.on('movestart', (event) => {
+      if (event.originalEvent) this.overview = false;
+    });
 
-    // MapLibre молча глотает исключения из обработчика load: слои просто не
-    // появляются, а в консоли пусто. Ловим сами.
-    this.map.on('load', () => {
+    // load ждёт все видимые тайлы, style.load позволяет играть до загрузки снимков.
+    this.map.once('style.load', () => {
       try {
         this.buildLayers();
       } catch (err) {
-        console.error('[mapView] сборка слоёв упала:', err);
-        (window as unknown as { __mapErr: unknown[] }).__mapErr?.push(String(err));
+        this.reportError(err);
       }
     });
   }
@@ -158,7 +179,17 @@ export class MapView {
         type: 'geojson',
         data: this.geojson,
         promoteId: 'id',
+        attribution: '<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>',
       });
+      this.map.addLayer({
+        id: 'terrain', type: 'fill', source: SOURCE,
+        paint: {
+          'fill-color': [
+            'interpolate', ['linear'], ['coalesce', ['get', 'forest'], 0],
+            0, '#3B4442', 0.25, '#344E3B', 1, '#233E30',
+          ],
+        },
+      }, 'sat');
 
       this.map.addSource(MASK, { type: 'geojson', data: this.mask });
       this.map.addLayer({
@@ -253,7 +284,8 @@ export class MapView {
 
       this.map.on('click', 'fill', (e) => {
         const f = e.features?.[0];
-        if (f && this.onPick) this.onPick(String(f.properties?.id));
+        const id = f?.properties?.id;
+        if (id != null && this.onPick) this.onPick(String(id));
       });
       this.map.on('mouseenter', 'fill', () => {
         this.map.getCanvas().style.cursor = 'pointer';
@@ -262,12 +294,53 @@ export class MapView {
         this.map.getCanvas().style.cursor = '';
       });
 
+    if (this.fatalError) return;
     this.ready = true;
+    if (this.latestState) this.sync(this.latestState);
+    this.select(this.selected);
     const box = this.map.getContainer();
     if (box.clientWidth > 0 && box.clientHeight > 0) {
-      this.fitKrai();
-      this.fitted = true;
+      if (this.pendingFocus) this.focusDistrict(this.pendingFocus);
+      else this.resetView();
     }
+  }
+
+  private reportError(cause: unknown): void {
+    if (this.fatalError) return;
+    this.fatalError = cause instanceof Error ? cause : new Error(String(cause));
+    this.ready = false;
+    console.error('[mapView]', this.fatalError);
+    (window as unknown as { __mapErr?: unknown[] }).__mapErr?.push(String(this.fatalError));
+    this.errorHandler?.(this.fatalError);
+  }
+
+  onError(fn: (error: Error) => void): void {
+    this.errorHandler = fn;
+    if (this.fatalError) fn(this.fatalError);
+  }
+
+  private viewPadding(): maplibregl.PaddingOptions {
+    const { clientWidth: width, clientHeight: height } = this.map.getContainer();
+    const wide = width > 1180;
+    const mobile = width <= 700;
+    return {
+      top: Math.min(wide ? 72 : mobile ? 165 : 135, height * 0.3),
+      bottom: Math.min(mobile ? 155 : 110, height * 0.3),
+      left: wide ? 230 : 20,
+      right: wide ? 310 : 20,
+    };
+  }
+
+  private boundsFor(features: GeoJSON.Feature[]): maplibregl.LngLatBounds {
+    const bounds = new maplibregl.LngLatBounds();
+    for (const { geometry } of features) {
+      const polygons = geometry.type === 'MultiPolygon' ? geometry.coordinates
+        : geometry.type === 'Polygon' ? [geometry.coordinates] : [];
+      for (const polygon of polygons) {
+        for (const point of polygon[0] ?? []) bounds.extend(point as [number, number]);
+      }
+    }
+    return bounds;
   }
 
   /**
@@ -280,41 +353,66 @@ export class MapView {
    * округам с лесистостью от 25% — север остаётся доступен панорамированием.
    */
   private fitKrai(): void {
-    const b = new maplibregl.LngLatBounds();
     const forested = this.geojson.features.filter(
       (f) => ((f.properties as { forest?: number }).forest ?? 0) >= 0.25,
     );
-    for (const f of (forested.length ? forested : this.geojson.features)) {
-      const g = f.geometry as GeoJSON.MultiPolygon;
-      for (const poly of g.coordinates) {
-        for (const ring of poly) {
-          for (const p of ring) b.extend(p as [number, number]);
-        }
-      }
-    }
+    const bounds = this.boundsFor(forested.length ? forested : this.geojson.features);
+    if (bounds.isEmpty()) throw new Error('Не найдены границы игровых районов');
     // Справа стоят сводки и панель района, слева — легенда: если вписывать
     // с одинаковыми отступами, край уезжает под панели.
-    const wide = this.map.getContainer().clientWidth > 900;
-    this.map.fitBounds(b, {
-      padding: wide
-        ? { top: 90, bottom: 90, left: 260, right: 330 }
-        : { top: 70, bottom: 70, left: 20, right: 20 },
+    this.map.fitBounds(bounds, {
+      padding: this.viewPadding(),
+      bearing: 0,
+      pitch: 0,
       duration: 0,
     });
+  }
+
+  resetView(): void {
+    this.overview = true;
+    this.pendingFocus = null;
+    this.fitted = false;
+    const box = this.map.getContainer();
+    if (!this.ready || box.clientWidth === 0 || box.clientHeight === 0) return;
+    this.fitKrai();
+    this.fitted = true;
+  }
+
+  focusDistrict(id: DistrictId): void {
+    const feature = this.geojson.features.find((f) => String(f.properties?.id) === id);
+    if (!feature) return;
+    this.overview = false;
+    this.pendingFocus = id;
+    const box = this.map.getContainer();
+    if (!this.ready || box.clientWidth === 0 || box.clientHeight === 0) return;
+    const bounds = this.boundsFor([feature]);
+    if (bounds.isEmpty()) return;
+    this.map.fitBounds(bounds, {
+      padding: this.viewPadding(),
+      maxZoom: 8,
+      bearing: 0,
+      pitch: 0,
+      duration: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 450,
+    });
+    this.pendingFocus = null;
+    this.fitted = true;
   }
 
   onDistrictClick(fn: (id: DistrictId) => void): void {
     this.onPick = fn;
   }
 
-  select(id: DistrictId | null, prev: DistrictId | null): void {
+  select(id: DistrictId | null, prev: DistrictId | null = this.selected): void {
+    const previous = this.selected ?? prev;
+    this.selected = id;
     if (!this.ready) return;
-    if (prev) this.map.setFeatureState({ source: SOURCE, id: prev }, { sel: false });
+    if (previous) this.map.setFeatureState({ source: SOURCE, id: previous }, { sel: false });
     if (id) this.map.setFeatureState({ source: SOURCE, id }, { sel: true });
   }
 
   /** Перелить состояние симуляции в feature-state. Вызывается каждый такт. */
   sync(s: WorldState): void {
+    this.latestState = s;
     if (!this.ready) return;
     for (let i = 0; i < s.ids.length; i++) {
       const id = s.ids[i];

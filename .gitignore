@@ -6,3 +6,8 @@ dist/
 # без них игра не запускается.
 data/raw/
 public/data/
+
+# Local preview and browser test output.
+.dev-server*.log
+artifacts/
+test-results/

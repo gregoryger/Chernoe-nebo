@@ -1,8 +1,10 @@
 import { BRONZE, GOLD, SILVER } from '../sim/tick';
-import { formatDate, seasonDay } from '../sim/weather';
+import { formatDate, seasonDay, SEASON_DAYS } from '../sim/weather';
 import { describeState } from '../map/ramp';
 import { canThrow, throwCost } from '../sim/world';
 import type { District, DistrictId, WorldState } from '../sim/types';
+import { escapeHtml } from './html';
+import { icon } from './icons';
 
 const ha = (n: number) => Math.round(n).toLocaleString('ru');
 
@@ -17,23 +19,34 @@ const LEVEL_NAME = [
 
 export class Hud {
   private root: HTMLElement;
-  private lastEventCount = 0;
+  private lastEvent?: WorldState['events'][number];
   private panelAction?: (act: string, id: DistrictId) => void;
+  private panelClose?: () => void;
 
   constructor(root: HTMLElement) {
     this.root = root;
     this.root.innerHTML = `
       <div class="topbar">
+        <div class="game-brand">${icon('flame')}<b>Чёрное небо</b></div>
         <div class="cell"><b id="date">15 апреля</b><span id="day">сутки 1 из 169</span></div>
         <div class="cell"><b id="wind">—</b><span>ветер</span></div>
         <div class="cell"><b id="drought">—</b><span>засуха</span></div>
         <div class="cell speeds">
-          <button data-speed="0" class="sp" title="Пауза (пробел)">Пауза</button>
+          <button data-speed="0" class="sp" title="Пауза (пробел)" aria-label="Пауза">${icon('pause')}</button>
           <button data-speed="1" class="sp on" title="Обычная скорость">1&times;</button>
           <button data-speed="2" class="sp" title="Вдвое быстрее">2&times;</button>
           <button data-speed="3" class="sp" title="Пятикратно">5&times;</button>
         </div>
+        <button id="openMenu" class="icon-button" title="Меню партии" aria-label="Меню партии">${icon('menu')}</button>
       </div>
+
+      <div class="map-tools">
+        <select id="districtSelect" aria-label="Выбрать округ"><option value="">Выбрать округ</option></select>
+        <button id="resetMap" class="icon-button" title="Показать весь край" aria-label="Показать весь край">${icon('locate')}</button>
+        <button id="toggleFeed" class="icon-button" title="Сводки" aria-label="Сводки" aria-expanded="false">${icon('news')}</button>
+      </div>
+      <div class="pause-indicator" id="pauseIndicator" hidden>${icon('pause')} Пауза</div>
+      <div class="save-status" id="saveStatus" role="status" hidden></div>
 
       <div class="botbar">
         <div class="cell wide">
@@ -44,7 +57,7 @@ export class Hud {
         <div class="cell"><b id="sparks">0</b><span>искры</span></div>
         <div class="cell"><b id="levelname">тишина</b><span id="level">реакция МЧС · уровень 0</span></div>
         <div class="cell" id="focusCell"><b id="focusName">не задан</b><span>фронт направлен</span></div>
-        <button id="openTree" class="primary">Эволюция <i id="treeBadge" class="badge" hidden>0</i></button>
+        <button id="openTree" class="primary">${icon('evolution')} Эволюция <i id="treeBadge" class="badge" hidden>0</i></button>
       </div>
 
       <aside class="legend">
@@ -56,16 +69,9 @@ export class Hud {
           <li><i style="background:#BE3512"></i>сильный пожар</li>
           <li><i style="background:#7E1808"></i>сплошной пожар</li>
           <li><i style="background:#33302C"></i>выгорел</li>
-          <li><i class="dashed"></i>зона контроля — не тушат</li>
+          <li><i class="dashed"></i>зона контроля</li>
           <li><i class="faded"></i>бледный — пожар не обнаружен</li>
           <li><i class="focusmark"></i>фронт направлен сюда</li>
-        </ul>
-        <h3>Управление</h3>
-        <ul class="keys">
-          <li><kbd>Пробел</kbd>пауза и продолжить</li>
-          <li><kbd>E</kbd>дерево эволюций</li>
-          <li><kbd>Esc</kbd>закрыть окно</li>
-          <li><kbd>клик</kbd>сводка и управление</li>
         </ul>
       </aside>
 
@@ -79,6 +85,7 @@ export class Hud {
       const target = e.target as HTMLElement;
       if (target.closest('#closePanel')) {
         this.hidePanel();
+        this.panelClose?.();
         return;
       }
       const btn = target.closest<HTMLElement>('[data-act]');
@@ -86,6 +93,34 @@ export class Hud {
         this.panelAction?.(btn.dataset.act!, btn.dataset.id!);
       }
     });
+    this.root.querySelector('#toggleFeed')!.addEventListener('click', () => {
+      const open = this.root.classList.toggle('feed-open');
+      this.root.querySelector('#toggleFeed')!.setAttribute('aria-expanded', String(open));
+    });
+  }
+
+  onPanelClose(fn: () => void): void { this.panelClose = fn; }
+
+  onMenu(fn: () => void): void {
+    this.root.querySelector('#openMenu')!.addEventListener('click', fn);
+  }
+
+  onResetMap(fn: () => void): void {
+    this.root.querySelector('#resetMap')!.addEventListener('click', fn);
+  }
+
+  setDistricts(districts: Record<DistrictId, District>, onSelect: (id: DistrictId) => void): void {
+    const select = this.root.querySelector<HTMLSelectElement>('#districtSelect')!;
+    for (const d of Object.values(districts).sort((a, b) => a.name.localeCompare(b.name, 'ru'))) {
+      select.add(new Option(d.name.replace(' муниципальный округ', ''), d.id));
+    }
+    select.addEventListener('change', () => { if (select.value) onSelect(select.value); });
+  }
+
+  saveStatus(ok: boolean): void {
+    const status = this.root.querySelector<HTMLElement>('#saveStatus')!;
+    status.hidden = ok;
+    status.textContent = ok ? '' : 'Не удалось сохранить партию в браузере';
   }
 
   /** Действия из панели округа: 'focus' и 'throw'. */
@@ -110,7 +145,9 @@ export class Hud {
   setSpeed(speed: number): void {
     this.root.querySelectorAll<HTMLButtonElement>('.sp').forEach((b) => {
       b.classList.toggle('on', Number(b.dataset.speed) === speed);
+      b.setAttribute('aria-pressed', String(Number(b.dataset.speed) === speed));
     });
+    this.root.querySelector<HTMLElement>('#pauseIndicator')!.hidden = speed !== 0;
   }
 
   update(s: WorldState, affordable: number): void {
@@ -118,7 +155,7 @@ export class Hud {
     const day = seasonDay(s.tick);
 
     $('date').textContent = formatDate(s.tick);
-    $('day').textContent = `сутки ${day + 1} из 169`;
+    $('day').textContent = `сутки ${Math.min(day + 1, SEASON_DAYS)} из ${SEASON_DAYS}`;
 
     const deg = (s.weather.windDir * 180) / Math.PI;
     const compass = ['В', 'СВ', 'С', 'СЗ', 'З', 'ЮЗ', 'Ю', 'ЮВ'];
@@ -155,19 +192,23 @@ export class Hud {
   focusLabel = 'не задан';
 
   private renderFeed(s: WorldState): void {
-    if (s.events.length === this.lastEventCount) return;
-    this.lastEventCount = s.events.length;
+    if (s.events.at(-1) === this.lastEvent) return;
+    this.lastEvent = s.events.at(-1);
     const list = this.root.querySelector('#feedList')!;
     list.innerHTML = s.events
       .slice(-14)
       .reverse()
-      .map((e) => `<li class="k-${e.kind}"><time>${formatDate(e.tick)}</time>${e.text}</li>`)
+      .map((e) => `<li class="k-${e.kind}"><time>${formatDate(e.tick)}</time>${escapeHtml(e.text)}</li>`)
       .join('');
   }
 
   showPanel(d: District, s: WorldState, districts: Record<DistrictId, District>): void {
     const st = s.districts[d.id];
     const panel = this.root.querySelector<HTMLElement>('#panel')!;
+    const focused = panel.contains(document.activeElement) ? document.activeElement as HTMLElement : null;
+    const focusAction = focused?.dataset.act;
+    const focusId = focused?.id;
+    const scroll = panel.scrollTop;
     const FUEL = ['', 'тундра', 'северная тайга', 'средняя тайга', 'сосняк', 'лесостепь'];
     const cap = d.area * d.forest * 100 * d.budget;
 
@@ -178,14 +219,16 @@ export class Hud {
       ? 'Головни перелетят от соседнего пожара'
       : st.B > 0.01 ? 'Здесь уже горит'
       : st.F < 0.1 ? 'Гореть нечему'
-      : s.throwCooldown > 0 ? `Искры кончились, ждать ${s.throwCooldown} тактов`
+      : s.throwCooldown > 0 ? `Следующий бросок через ${s.throwCooldown * 6} ч`
       : s.sparks < cost ? `Не хватает ${Math.ceil(cost - s.sparks)} искр`
       : 'Рядом нет достаточно сильного пожара';
 
     panel.hidden = false;
+    this.root.classList.add('panel-open');
+    (this.root.querySelector('#districtSelect') as HTMLSelectElement).value = d.id;
     panel.innerHTML = `
-      <button class="close" id="closePanel">&times;</button>
-      <h3>${d.name}</h3>
+      <button class="close" id="closePanel" title="Закрыть округ" aria-label="Закрыть округ">${icon('close')}</button>
+      <h3>${escapeHtml(d.name.replace(' муниципальный округ', ''))}</h3>
       <p class="status">${describeState(st.B, st.F)}${d.ctrlZone ? ' · зона контроля' : ''}</p>
       <dl>
         <div><dt>Площадь</dt><dd>${d.area.toLocaleString('ru')} км²</dd></div>
@@ -213,17 +256,28 @@ export class Hud {
         ${d.neighbors.map((e) => {
           const nb = districts[e.to];
           const bar = e.river > 0 ? ' · река' : '';
-          return `<li><span>${nb.name.replace(' муниципальный округ', '')}</span>`
+          return `<li><button class="neighbor-link" data-act="select" data-id="${e.to}">${escapeHtml(nb.name.replace(' муниципальный округ', ''))}</button>`
             + `<em>${(s.districts[e.to].B * 100).toFixed(0)}%${bar}</em></li>`;
         }).join('')}
       </ul>
     `;
-    panel.querySelector('#closePanel')!.addEventListener('click', () => {
-      panel.hidden = true;
-    });
+    const nextFocus = focusAction ? panel.querySelector<HTMLElement>(`[data-act="${focusAction}"][data-id="${focused?.dataset.id}"]`)
+      : focusId ? panel.querySelector<HTMLElement>(`#${focusId}`) : null;
+    if (focused) {
+      const focusTarget = nextFocus && !nextFocus.matches(':disabled')
+        ? nextFocus : panel.querySelector<HTMLElement>('#closePanel');
+      focusTarget?.focus({ preventScroll: true });
+    }
+    panel.scrollTop = scroll;
   }
 
   hidePanel(): void {
-    this.root.querySelector<HTMLElement>('#panel')!.hidden = true;
+    const panel = this.root.querySelector<HTMLElement>('#panel')!;
+    const hadFocus = panel.contains(document.activeElement);
+    panel.hidden = true;
+    this.root.classList.remove('panel-open');
+    const select = this.root.querySelector<HTMLSelectElement>('#districtSelect')!;
+    select.value = '';
+    if (hadFocus) select.focus({ preventScroll: true });
   }
 }

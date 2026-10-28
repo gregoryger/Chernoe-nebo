@@ -419,3 +419,294 @@ html, body {
 
 #focusCell b.dim { color: var(--ink-3); font-weight: 400; }
 .botbar #focusCell { min-width: 140px; }
+
+/* ---------------------------------------------- меню, инструменты, статусы */
+/* Разметка этих элементов появилась в hud.ts, main.ts, tree.ts и
+   startScreen.ts, а стили к ним не были добавлены: кнопки рисовались
+   браузерными по умолчанию, а инструменты карты и индикатор паузы налезали на
+   верхнюю панель. Элементы с display:flex перекрывают атрибут hidden, поэтому
+   он закреплён явно. */
+[hidden] { display: none !important; }
+
+.game-brand {
+  background: var(--surface);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 14px;
+  color: var(--ember);
+}
+.game-brand b { color: var(--ink); font-size: 14px; white-space: nowrap; }
+
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.icon-button:hover { color: var(--ink); border-color: var(--accent); }
+.topbar .icon-button { width: 46px; height: auto; border: 0; border-radius: 0; background: var(--surface); }
+.sp svg { display: block; }
+.icon-button:focus-visible, .map-tools select:focus-visible, .neighbor-link:focus-visible,
+.evo-choice:focus-visible, .scenario-choice:focus-visible {
+  outline: 2px solid var(--ember);
+  outline-offset: 2px;
+}
+
+.map-tools {
+  position: absolute;
+  left: 12px;
+  bottom: 104px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+}
+.map-tools select {
+  height: 34px;
+  max-width: 230px;
+  padding: 0 8px;
+  background: var(--surface-2);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  font: inherit;
+  font-size: 12.5px;
+}
+/* На широком экране сводки видны всегда, переключатель нужен только на узком. */
+#toggleFeed { display: none; }
+@media (max-width: 1100px) {
+  #toggleFeed { display: inline-flex; }
+  #ui:not(.feed-open) .feed { display: none; }
+}
+
+.pause-indicator {
+  position: absolute;
+  top: 84px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.save-status {
+  position: absolute;
+  left: 50%;
+  bottom: 104px;
+  transform: translateX(-50%);
+  padding: 5px 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  color: var(--ink-2);
+  font-size: 12px;
+}
+#ui:not(.playing) .map-tools,
+#ui:not(.playing) .pause-indicator,
+#ui:not(.playing) .save-status { display: none; }
+
+.loading-screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  background: var(--ground);
+  text-align: center;
+}
+.loading-screen b { font-size: 22px; text-transform: uppercase; letter-spacing: 0.02em; }
+.loading-screen span, .loading-screen p { margin: 0; color: var(--ink-2); }
+.loading-screen .primary { margin: 8px 0 0; padding: 10px 20px; }
+
+/* Кнопки внутри карточек и узлов наследуют вид родителя. */
+.scenario-choice {
+  display: block;
+  width: 100%;
+  background: none;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  padding: 8px 0 0;
+  font-family: inherit;
+  cursor: pointer;
+}
+.evo-choice {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: inherit;
+}
+.evo-desc { display: block; margin: 3px 0 4px; font-size: 12px; color: var(--ink-2); line-height: 1.45; }
+.evo-choice .evo-note { display: block; }
+
+.neighbor-link {
+  padding: 0;
+  background: none;
+  border: 0;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.neighbor-link:hover { color: var(--ink); text-decoration: underline; }
+
+.menu-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+.menu-actions .primary { margin-left: 0; padding: 10px 20px; }
+.menu-actions .act { flex: none; text-align: center; }
+.menu-save { margin: 12px 0 0; font-size: 12px; color: var(--ink-3); }
+.record { margin: 8px 0 0; color: var(--ember); font-weight: 700; }
+.best-score { margin: 0 0 12px; font-size: 12.5px; color: var(--ink-2); }
+.start-resume { display: flex; align-items: center; gap: 12px; margin: 0 0 14px; }
+.start-resume .primary { margin-left: 0; padding: 10px 20px; }
+.start-resume span { font-size: 12.5px; color: var(--ink-2); }
+
+/* ---------------------------------------------------------- таблица лидеров */
+.start-foot .lb-toggle { flex: none; align-self: flex-start; margin-top: 6px; }
+.lb-title { margin: 0 0 10px; font-size: 16px; }
+.lb-view { margin-bottom: 16px; }
+.lb-filters { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.lb-filter {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.lb-filter[aria-pressed="true"] { border-color: var(--ember); color: var(--ember); }
+.lb-filter:focus-visible { outline: 2px solid var(--ember); outline-offset: 2px; }
+.lb-body { overflow-x: auto; }
+.lb-table { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.lb-table th {
+  text-align: left;
+  font-weight: 600;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--line);
+}
+.lb-table td { padding: 5px 8px; border-bottom: 1px solid var(--line); color: var(--ink-2); }
+.lb-table td:first-child { color: var(--ink-3); width: 2.5em; }
+.lb-table .lb-name { color: var(--ink); max-width: 14em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lb-table .lb-num { text-align: right; color: var(--ink); }
+.lb-table th:nth-child(4) { text-align: right; }
+.lb-table tr.mine td { background: rgba(240, 129, 58, 0.12); color: var(--ink); }
+.lb-table tr.mine .lb-name { color: var(--ember); font-weight: 700; }
+.lb-table .g-gold { color: #E3B341; }
+.lb-table .g-silver { color: #C9D1D9; }
+.lb-table .g-bronze { color: #CD8A4F; }
+.lb-empty, .lb-error { margin: 8px 0; font-size: 12.5px; color: var(--ink-3); }
+.lb-error { color: var(--ember); }
+.lb-retry { flex: none; }
+@media (max-width: 620px) { .lb-date { display: none; } }
+
+.lb-submit { margin: 16px 0 6px; padding-top: 12px; border-top: 1px solid var(--line); }
+.lb-submit h4 { margin: 0 0 8px; }
+.lb-form label { display: block; font-size: 12px; color: var(--ink-3); margin-bottom: 4px; }
+.lb-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.lb-row input {
+  flex: 1 1 180px;
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px;
+  background: var(--surface-2);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  font: inherit;
+}
+.lb-row input:focus-visible { outline: 2px solid var(--ember); outline-offset: 1px; }
+.lb-row .act { flex: none; text-align: center; }
+.lb-status { min-height: 1.2em; margin: 6px 0; font-size: 12.5px; color: var(--ink-2); }
+
+/* ---------------------------------------------------------- телефоны */
+/* Десктопная раскладка — панели в одну строку по краям экрана — на узком
+   экране раздвигала страницу почти вдвое шире видимой области. Здесь
+   интерфейс становится колонкой: верхняя панель в две строки, под ней
+   инструменты карты и статус паузы, нижняя панель прижата к низу. Остальные
+   панели остаются поверх карты. */
+@media (max-width: 760px) {
+  #ui.playing { display: flex; flex-direction: column; align-items: stretch; }
+  #ui.playing .topbar,
+  #ui.playing .map-tools,
+  #ui.playing .botbar {
+    position: relative;
+    top: auto;
+    bottom: auto;
+    left: auto;
+    right: auto;
+    margin: 8px 8px 0;
+  }
+  #ui.playing .botbar { margin: auto 8px 8px; order: 10; }
+  #ui.playing .pause-indicator,
+  #ui.playing .save-status {
+    position: relative;
+    top: auto;
+    bottom: auto;
+    left: auto;
+    transform: none;
+    align-self: center;
+    margin-top: 6px;
+  }
+
+  .topbar { flex-wrap: wrap; }
+  .topbar .game-brand { display: none; }
+  .topbar .cell { flex: 1 1 0; min-width: 0; padding: 6px 10px; }
+  .topbar .cell b { font-size: 14px; }
+  .topbar .speeds { order: 5; flex: 1 1 100%; display: flex; gap: 6px; justify-content: space-between; }
+  .topbar .speeds .sp { flex: 1 1 0; }
+  .topbar #openMenu { order: 4; width: 44px; flex: none; }
+
+  .map-tools { align-self: flex-start; max-width: calc(100% - 16px); }
+  .map-tools select { max-width: calc(100vw - 80px); }
+
+  .botbar { flex-wrap: wrap; }
+  .botbar .cell, .botbar .cell.wide, .botbar #focusCell, .botbar .cell:nth-child(3) {
+    flex: 1 1 40%;
+    min-width: 0;
+    padding: 6px 10px;
+  }
+  .botbar .primary { flex: 1 1 100%; margin-left: 0; padding: 10px 14px; }
+
+  .panel { left: 8px; right: 8px; bottom: 8px; width: auto; max-height: 55vh; z-index: 5; }
+  .feed { left: 8px; right: 8px; top: auto; bottom: 8px; width: auto; max-height: 45vh; z-index: 4; }
+
+  .modal { padding: 8px; }
+  .sheet { padding: 14px 14px 18px; }
+  .branches { grid-template-columns: 1fr; }
+  .scenarios { grid-template-columns: 1fr; }
+  .stats { grid-template-columns: 1fr; }
+}

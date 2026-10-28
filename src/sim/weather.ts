@@ -100,16 +100,18 @@ export function stepWeather(s: WorldState): void {
     // нижняя мода — партии, где единственный очаг заглох, а сезон ещё идёт.
     // Новые грозовые очаги поднимают дно, почти не задевая потолок: в удачной
     // партии огонь и так везде, лишний очаг там мало что добавляет.
-    if (roll < (summer ? 0.048 : 0.019)) {
+    const stormChance = summer ? 0.048 : 0.019;
+    const squallLimit = stormChance + 0.026;
+    if (roll < stormChance) {
       w.event = 'storm';
       w.eventTicks = 2;
       s.events.push({ tick: s.tick, kind: 'weather', text: 'Сухая гроза.' });
-    } else if (roll < 0.045) {
+    } else if (roll < squallLimit) {
       w.event = 'squall';
       w.eventTicks = 4;
       w.targetW = 1.6;
       s.events.push({ tick: s.tick, kind: 'weather', text: 'Шквалистый ветер.' });
-    } else if (roll < 0.045 + 0.010 + day / 4000) {
+    } else if (roll < squallLimit + 0.010 + day / 4000) {
       w.event = 'rain';
       w.eventTicks = 6;
       s.events.push({ tick: s.tick, kind: 'weather', text: 'Прошли дожди.' });

@@ -1,4 +1,4 @@
-import { computeModifiers } from './evolutions';
+import { BY_ID, canBuy, computeModifiers } from './evolutions';
 import { seedFrom } from './rng';
 import { initWeather } from './weather';
 import type { District, DistrictId, DistrictState, WorldState } from './types';
@@ -43,7 +43,7 @@ export const SCENARIOS: Scenario[] = [
   },
   {
     id: 'emelyanovo', match: 'Емельяновский', title: 'Под Красноярском',
-    blurb: 'Сосновые боры у миллионника. Тройные искры и авиация на вторые сутки.',
+    blurb: 'Сосновые боры у миллионника. Огонь быстро заметят; рядом аэродром и силы тушения.',
   },
 ];
 
@@ -175,6 +175,7 @@ export const THROW_BASE = 25;
 export const THROW_STEP = 15;
 /** Тактов простоя после броска. */
 export const THROW_COOLDOWN = 8;
+export const SPARK_PER_DISTRICT = 10;
 /** Минимальная доля охвата у соседа, чтобы было чем бросаться. */
 const THROW_SOURCE_B = 0.05;
 
@@ -194,8 +195,9 @@ export function canThrow(
   districts: Record<DistrictId, District>,
   id: DistrictId,
 ): boolean {
+  if (!Object.hasOwn(s.districts, id) || !Object.hasOwn(districts, id)) return false;
   const st = s.districts[id];
-  if (!st || st.B > 0.01 || st.F < 0.1) return false;
+  if (s.status !== 'running' || !st || !districts[id] || st.B > 0.01 || st.F < 0.1) return false;
   if (s.throwCooldown > 0 || s.sparks < throwCost(s)) return false;
   return districts[id].neighbors.some((e) => s.districts[e.to].B >= THROW_SOURCE_B);
 }
@@ -217,7 +219,7 @@ export function emberThrow(
     st.ignited = true;
     // Правило «каждый новый округ даёт 10 искр» должно работать всегда,
     // иначе игрок не может на него рассчитывать. Цена броска это учитывает.
-    s.sparks += 10;
+    s.sparks += SPARK_PER_DISTRICT;
   }
   s.events.push({
     tick: s.tick,
@@ -229,13 +231,16 @@ export function emberThrow(
 
 /** Направить фронт на округ; null снимает фокус. */
 export function setFocus(s: WorldState, id: DistrictId | null): void {
+  if (s.status !== 'running' || (id !== null && !Object.hasOwn(s.districts, id))) return;
   s.focus = s.focus === id ? null : id;
 }
 
 /** Применить покупку эволюции. Возвращает false, если купить нельзя. */
-export function buy(s: WorldState, id: string, cost: number): boolean {
-  if (s.bought.includes(id) || s.sparks < cost) return false;
-  s.sparks -= cost;
+export function buy(s: WorldState, id: string, cost?: number): boolean {
+  if (s.status !== 'running' || !canBuy(id, s.bought, s.sparks)) return false;
+  const price = BY_ID[id].cost;
+  if (cost !== undefined && cost !== price) return false;
+  s.sparks -= price;
   s.bought.push(id);
   s.mods = computeModifiers(s.bought);
   return true;

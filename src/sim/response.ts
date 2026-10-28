@@ -1,4 +1,5 @@
 import { rnd, pick } from './rng';
+import { SPARK_PER_DISTRICT } from './world';
 import type { District, DistrictId, WorldState } from './types';
 
 /** Наземные и авиационные силы по уровню эскалации 0…5. */
@@ -136,7 +137,11 @@ export function stepResponse(s: WorldState, districts: Record<DistrictId, Distri
           const n = pick(s, ns);
           const nst = s.districts[n.to];
           if (nst.F > 0.1) {
-            nst.B = Math.max(nst.B, nst.B + 0.05);
+            nst.B = Math.min(1, nst.B + 0.05);
+            if (!nst.ignited) {
+              nst.ignited = true;
+              s.sparks += SPARK_PER_DISTRICT;
+            }
             s.events.push({ tick: s.tick, kind: 'spread',
               text: `Отжиг ушёл: огонь перекинулся в ${districts[n.to].name}.` });
           }
