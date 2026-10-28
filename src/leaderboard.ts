@@ -104,7 +104,8 @@ export function createLeaderboardClient(
   fetchImpl: Fetch = (...args) => fetch(...args),
   timeoutMs = 8000,
 ): LeaderboardClient {
-  const url = (baseUrl ?? '').trim().replace(/\/+$/, '');
+  // Адрес проекта часто копируют вместе с путём REST API — он добавляется ниже сам.
+  const url = (baseUrl ?? '').trim().replace(/\/+$/, '').replace(/\/rest\/v1$/, '');
   const apiKey = (key ?? '').trim();
   const enabled = Boolean(url && apiKey);
 

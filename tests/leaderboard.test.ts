@@ -87,6 +87,12 @@ describe('клиент Supabase', () => {
     expect(JSON.parse(String(init!.body))).toMatchObject({ name: 'Гриша', scenario: 'boguchany' });
   });
 
+  it('адрес, скопированный вместе с /rest/v1/, не удваивает путь', async () => {
+    const f = fakeFetch({ body: [] });
+    await createLeaderboardClient(`${URL}/rest/v1/`, 'k', f).top();
+    expect(String(f.mock.calls[0][0]).startsWith(`${URL}/rest/v1/scores?`)).toBe(true);
+  });
+
   it('старый anon-ключ (JWT) передаётся и как Bearer', async () => {
     const f = fakeFetch({ body: [] });
     await createLeaderboardClient(URL, 'eyJhbGciOi.test.sig', f).top();
